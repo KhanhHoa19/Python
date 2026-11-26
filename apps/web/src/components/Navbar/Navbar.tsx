@@ -1,47 +1,37 @@
 import React from 'react';
-import { BookOpen, Headphones, BarChart2 } from 'lucide-react';
+import { BarChart2, BookOpen, Headphones, Settings } from 'lucide-react';
+import { TabId } from '../../context/AppContext.tsx';
 
 interface NavbarProps {
-  currentTab: 'library' | 'player' | 'dashboard';
-  onSelectTab: (tab: 'library' | 'player' | 'dashboard') => void;
+  current: TabId;
+  onSelect: (tab: TabId) => void;
+  onSettings: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab }) => {
-  return (
-    <header className="navbar">
-      <div className="navbar-container">
-        <div className="navbar-brand" onClick={() => onSelectTab('library')}>
-          <BookOpen className="brand-icon" size={24} />
-          <span className="brand-name">StudyLab</span>
-          <span className="brand-tag">Audiobook</span>
-        </div>
+const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
+  { id: 'reader', label: 'Phòng Đọc', icon: <Headphones size={18} /> },
+  { id: 'library', label: 'Thư Viện & Ghi Chú', icon: <BookOpen size={18} /> },
+  { id: 'stats', label: 'Thống Kê', icon: <BarChart2 size={18} /> },
+];
 
-        <nav className="navbar-links">
-          <button
-            className={`nav-btn ${currentTab === 'library' ? 'active' : ''}`}
-            onClick={() => onSelectTab('library')}
-          >
-            <BookOpen size={18} />
-            <span>Library</span>
-          </button>
-
-          <button
-            className={`nav-btn ${currentTab === 'player' ? 'active' : ''}`}
-            onClick={() => onSelectTab('player')}
-          >
-            <Headphones size={18} />
-            <span>Player</span>
-          </button>
-
-          <button
-            className={`nav-btn ${currentTab === 'dashboard' ? 'active' : ''}`}
-            onClick={() => onSelectTab('dashboard')}
-          >
-            <BarChart2 size={18} />
-            <span>Dashboard</span>
-          </button>
-        </nav>
+export const Navbar: React.FC<NavbarProps> = ({ current, onSelect, onSettings }) => (
+  <header className="navbar">
+    <div className="navbar-container">
+      <div className="navbar-brand">
+        <Headphones className="brand-icon" size={24} aria-hidden="true" />
+        <span className="brand-name">Audiobook TTS</span>
       </div>
-    </header>
-  );
-};
+      <nav className="navbar-links" aria-label="Điều hướng chính">
+        {TABS.map((tab) => (
+          <button key={tab.id} className={`nav-btn ${current === tab.id ? 'active' : ''}`} aria-current={current === tab.id ? 'page' : undefined} onClick={() => onSelect(tab.id)}>
+            {tab.icon}
+            <span>{tab.label}</span>
+          </button>
+        ))}
+      </nav>
+      <button className="nav-btn icon-only" onClick={onSettings} aria-label="Kết nối & Cài đặt" title="Kết nối & Cài đặt">
+        <Settings size={18} />
+      </button>
+    </div>
+  </header>
+);

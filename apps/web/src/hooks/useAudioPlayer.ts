@@ -1,212 +1,321 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ApiError } from '../api/client.ts';
+import { fetchSentenceAudio, recordReadingSession, saveBookmark } from '../api/playerApi.ts';
+import { AudioPrefetcher } from '../lib/audioPrefetcher.ts';
 import { BookSentence } from '../types/book.ts';
-import { getAudioStreamUrl, updateBookmark, recordReadingSession } from '../api/playerApi.ts';
+import { PlayerState } from '../types/player.ts';
 
-export interface UseAudioPlayerProps {
+const BOOKMARK_INTERVAL_MS = 5000;
+
+export interface UseAudioPlayerOptions {
   bookId: number;
   sentences: BookSentence[];
-  initialIndex?: number;
+  initialIndex: number;
+  voice: string | null;
+  prefetchCount: number;
+  initialSpeed: number;
+  onWarning: (message: string) => void;
+  onError: (message: string) => void;
 }
 
-export function useAudioPlayer({ bookId, sentences, initialIndex = 0 }: UseAudioPlayerProps) {
-  const [currentIndex, setCurrentIndex] = useState<number>(initialIndex);
-  const [isPlaying, setIsPlaying] = useState<boolean>(false);
-  const [isBuffering, setIsBuffering] = useState<boolean>(false);
-  const [speed, setSpeedState] = useState<number>(1.0);
-  const [lastLatencySec, setLastLatencySec] = useState<number>(0.0);
+interface Session {
+  start: Date;
+  seconds: number;
+  sentences: number;
+  words: number;
+}
 
-  const activeAudio = useRef<HTMLAudioElement | null>(null);
-  const prefetchAudio = useRef<HTMLAudioElement | null>(null);
+/**
+ * IMPORTANT: mount with `key={bookId}`. The cleanup effects flush progress for the book the hook was
+ * created with; switching books inside one mounted instance would attribute it to the wrong book.
+ *
+ * Sentence-by-sentence playback: one <audio> element, a bounded look-ahead buffer of Blob URLs,
+ * speed applied with playbackRate (so the cache is shared across speeds), bookmark + session reporting.
+ */
+export function useAudioPlayer(options: UseAudioPlayerOptions) {
+  const { bookId, sentences, voice, prefetchCount } = options;
+  const [index, setIndex] = useState(options.initialIndex);
+  const [state, setState] = useState<PlayerState>('idle');
+  const [speed, setSpeedState] = useState(options.initialSpeed);
+  const [latencyMs, setLatencyMs] = useState(0);
+  const [buffered, setBuffered] = useState(0);
 
-  // Session stats tracking
-  const sessionStart = useRef<Date>(new Date());
-  const activeSeconds = useRef<number>(0);
-  const lastActiveTick = useRef<number>(Date.now());
-  const sentencesReadCount = useRef<number>(0);
-  const wordsReadCount = useRef<number>(0);
+  // Latest values for event handlers (avoids stale closures).
+  const live = useRef({ ...options, index, state, speed });
+  live.current = { ...options, index, state, speed };
 
-  // Initialize and keep index in sync
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const prefetcherRef = useRef<AudioPrefetcher | null>(null);
+  const generation = useRef(0);
+  const loadedIndex = useRef<number | null>(null);
+  const session = useRef<Session | null>(null);
+  const lastBookmarkAt = useRef(0);
+
+  const total = sentences.length;
+
+  // ---- reporting -------------------------------------------------------------------------
+
+  const saveProgress = useCallback((at: number, keepalive = false) => {
+    const current = live.current.sentences;
+    if (!current.length) return;
+    const i = Math.min(Math.max(at, 0), current.length - 1);
+    void saveBookmark(
+      {
+        book_id: live.current.bookId,
+        current_chapter: current[i].chapter_index || 1,
+        current_sentence_index: i,
+        completion_percentage: Number((((i + 1) / current.length) * 100).toFixed(1)),
+      },
+      keepalive,
+    ).catch(() => undefined);
+  }, []);
+
+  const flushSession = useCallback((keepalive = false) => {
+    const s = session.current;
+    session.current = null;
+    if (!s || s.sentences === 0) return;
+    void recordReadingSession(
+      {
+        book_id: live.current.bookId,
+        start_time: s.start.toISOString(),
+        end_time: new Date().toISOString(),
+        duration_seconds: Math.max(1, Math.round(s.seconds)),
+        sentences_read: s.sentences,
+        words_read: s.words,
+      },
+      keepalive,
+    ).catch(() => undefined);
+  }, []);
+
+  // ---- playback --------------------------------------------------------------------------
+
+  const stopAudio = useCallback(() => {
+    generation.current += 1;
+    audioRef.current?.pause();
+  }, []);
+
+  const finishWithError = useCallback(
+    (error: unknown) => {
+      stopAudio();
+      setState('paused');
+      flushSession();
+      saveProgress(live.current.index);
+      const message = error instanceof ApiError ? error.message : 'Không phát được âm thanh.';
+      live.current.onError(message);
+    },
+    [flushSession, saveProgress, stopAudio],
+  );
+
+  const playIndex = useCallback(
+    async (target: number): Promise<void> => {
+      const prefetcher = prefetcherRef.current;
+      const audio = audioRef.current;
+      if (!prefetcher || !audio || target < 0 || target >= live.current.sentences.length) return;
+
+      const gen = ++generation.current;
+      audio.pause();
+      setIndex(target);
+      setState('loading');
+      const startedAt = performance.now();
+
+      let url: string;
+      try {
+        url = await prefetcher.get(target);
+      } catch (error) {
+        if (gen !== generation.current) return; // superseded by a seek / pause
+        if (error instanceof ApiError && !error.isQuotaError && !error.isConnectionError) {
+          live.current.onWarning(`Bỏ qua câu ${target + 1} (lỗi TTS: ${error.message})`);
+          if (target + 1 < live.current.sentences.length) return playIndex(target + 1);
+          setState('finished');
+          return;
+        }
+        finishWithError(error);
+        return;
+      }
+      if (gen !== generation.current) return;
+
+      if (!session.current) session.current = { start: new Date(), seconds: 0, sentences: 0, words: 0 };
+      audio.src = url;
+      loadedIndex.current = target;
+      audio.defaultPlaybackRate = live.current.speed;
+      audio.playbackRate = live.current.speed;
+      try {
+        await audio.play();
+      } catch (error) {
+        if (gen !== generation.current) return;
+        setState('paused');
+        live.current.onError(
+          error instanceof DOMException && error.name === 'NotAllowedError'
+            ? 'Trình duyệt chặn tự phát. Bấm ▶ để bắt đầu.'
+            : 'Không phát được âm thanh.',
+        );
+        return;
+      }
+      if (gen !== generation.current) return;
+
+      setState('playing');
+      setLatencyMs(Math.round(performance.now() - startedAt));
+      prefetcher.warm(target + 1);
+      const now = Date.now();
+      if (now - lastBookmarkAt.current >= BOOKMARK_INTERVAL_MS) {
+        lastBookmarkAt.current = now;
+        saveProgress(target);
+      }
+    },
+    [finishWithError, saveProgress],
+  );
+
+  // One <audio> element for the lifetime of the hook.
   useEffect(() => {
-    if (initialIndex >= 0 && initialIndex < sentences.length) {
-      setCurrentIndex(initialIndex);
-    }
-  }, [initialIndex, sentences.length]);
+    const audio = new Audio();
+    audio.preload = 'auto';
+    audioRef.current = audio;
 
-  // Pre-fetch sentence N+1
-  const prefetchNext = useCallback((nextIdx: number, curSpeed: number) => {
-    if (nextIdx < sentences.length) {
-      const url = getAudioStreamUrl(bookId, nextIdx, curSpeed);
-      if (!prefetchAudio.current) {
-        prefetchAudio.current = new Audio();
+    const onEnded = () => {
+      const i = loadedIndex.current;
+      if (i === null) return;
+      const s = session.current;
+      if (s) {
+        s.sentences += 1;
+        s.words += live.current.sentences[i]?.word_count ?? 0;
+        s.seconds += Number.isFinite(audio.duration) ? audio.duration / (audio.playbackRate || 1) : 0;
       }
-      prefetchAudio.current.src = url;
-      prefetchAudio.current.playbackRate = curSpeed;
-      prefetchAudio.current.load();
-    }
-  }, [bookId, sentences.length]);
-
-  // Play a specific sentence index
-  const playSentence = useCallback((index: number, curSpeed: number) => {
-    if (index >= sentences.length || index < 0) {
-      setIsPlaying(false);
-      return;
-    }
-
-    setIsBuffering(true);
-    const startReqTime = performance.now();
-
-    // Check if prefetch audio already has this sentence loaded
-    const targetUrl = getAudioStreamUrl(bookId, index, curSpeed);
-    let audio = activeAudio.current;
-
-    if (prefetchAudio.current && prefetchAudio.current.src.includes(`/api/audio/${bookId}/${index}`)) {
-      audio = prefetchAudio.current;
-      prefetchAudio.current = null;
-    } else {
-      if (audio) {
-        audio.pause();
-      }
-      audio = new Audio(targetUrl);
-    }
-
-    activeAudio.current = audio;
-    audio.playbackRate = curSpeed;
-
-    audio.oncanplay = () => {
-      setIsBuffering(false);
-      const latency = (performance.now() - startReqTime) / 1000.0;
-      setLastLatencySec(Number(latency.toFixed(2)));
-    };
-
-    audio.onended = () => {
-      // Accumulate words read
-      const words = sentences[index]?.word_count || 0;
-      wordsReadCount.current += words;
-      sentencesReadCount.current += 1;
-
-      // Sync bookmark to backend
-      const nextIdx = index + 1;
-      const pct = sentences.length > 0 ? (nextIdx / sentences.length) * 100.0 : 0.0;
-      updateBookmark({
-        book_id: bookId,
-        current_chapter: sentences[index]?.chapter_index || 1,
-        current_sentence_index: nextIdx,
-        completion_percentage: Number(pct.toFixed(1)),
-      }).catch(console.error);
-
-      if (nextIdx < sentences.length) {
-        setCurrentIndex(nextIdx);
-        playSentence(nextIdx, curSpeed);
+      if (i + 1 < live.current.sentences.length) {
+        void playIndex(i + 1);
       } else {
-        setIsPlaying(false);
+        setState('finished');
+        flushSession();
+        saveProgress(i);
       }
     };
+    audio.addEventListener('ended', onEnded);
 
-    audio.onerror = () => {
-      setIsBuffering(false);
-      setIsPlaying(false);
+    return () => {
+      audio.removeEventListener('ended', onEnded);
+      audio.pause();
+      audio.removeAttribute('src');
+      audioRef.current = null;
     };
+  }, [flushSession, playIndex, saveProgress]);
 
-    audio.play().then(() => {
-      setIsPlaying(true);
-      // Trigger pre-fetch for upcoming sentence
-      prefetchNext(index + 1, curSpeed);
-    }).catch(() => {
-      setIsPlaying(false);
-      setIsBuffering(false);
-    });
-  }, [bookId, sentences, prefetchNext]);
+  // Rebuild the buffer when the book or voice changes; never reuse audio from another voice.
+  useEffect(() => {
+    const prefetcher = new AudioPrefetcher(
+      (i, signal) => fetchSentenceAudio(bookId, i, voice, signal),
+      total,
+      prefetchCount,
+    );
+    prefetcherRef.current = prefetcher;
+    return () => {
+      prefetcher.reset();
+      prefetcherRef.current = null;
+    };
+  }, [bookId, voice, total, prefetchCount]);
 
-  const play = useCallback(() => {
-    lastActiveTick.current = Date.now();
-    playSentence(currentIndex, speed);
-  }, [currentIndex, speed, playSentence]);
+  // A voice change while playing restarts the current sentence with the new voice.
+  const previousVoice = useRef(voice);
+  useEffect(() => {
+    if (previousVoice.current !== voice) {
+      previousVoice.current = voice;
+      if (live.current.state === 'playing' || live.current.state === 'loading') {
+        void playIndex(live.current.index);
+      }
+    }
+  }, [voice, playIndex]);
+
+  // New book: stop everything and move to its start position.
+  useEffect(() => {
+    stopAudio();
+    loadedIndex.current = null;
+    setState('idle');
+    setIndex(Math.min(Math.max(options.initialIndex, 0), Math.max(total - 1, 0)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookId, options.initialIndex]);
+
+  // Buffer indicator while playing.
+  useEffect(() => {
+    if (state !== 'playing' && state !== 'loading') return;
+    const timer = window.setInterval(() => {
+      setBuffered(prefetcherRef.current?.readyAhead(live.current.index) ?? 0);
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [state]);
+
+  // Flush on unmount and when the tab/page is closed.
+  useEffect(() => {
+    const onPageHide = () => {
+      flushSession(true);
+      saveProgress(live.current.index, true);
+    };
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+      flushSession(true);
+      saveProgress(live.current.index, true);
+    };
+  }, [bookId, flushSession, saveProgress]);
+
+  // ---- public controls -------------------------------------------------------------------
 
   const pause = useCallback(() => {
-    if (activeAudio.current) {
-      activeAudio.current.pause();
+    if (live.current.state !== 'playing' && live.current.state !== 'loading') return;
+    stopAudio();
+    setState('paused');
+    flushSession();
+    saveProgress(live.current.index);
+  }, [flushSession, saveProgress, stopAudio]);
+
+  const play = useCallback(() => {
+    const audio = audioRef.current;
+    if (!total) return;
+    if (live.current.state === 'paused' && audio && loadedIndex.current === live.current.index && audio.src) {
+      generation.current += 1;
+      if (!session.current) session.current = { start: new Date(), seconds: 0, sentences: 0, words: 0 };
+      audio
+        .play()
+        .then(() => setState('playing'))
+        .catch(() => void playIndex(live.current.index));
+      return;
     }
-    setIsPlaying(false);
-    setIsBuffering(false);
-    activeSeconds.current += (Date.now() - lastActiveTick.current) / 1000.0;
+    void playIndex(live.current.index);
+  }, [playIndex, total]);
+
+  const toggle = useCallback(() => {
+    const s = live.current.state;
+    if (s === 'playing' || s === 'loading') pause();
+    else play();
+  }, [pause, play]);
+
+  const seek = useCallback(
+    (target: number) => {
+      if (!total) return;
+      const clamped = Math.min(Math.max(target, 0), total - 1);
+      const s = live.current.state;
+      if (s === 'playing' || s === 'loading') {
+        void playIndex(clamped);
+      } else {
+        stopAudio();
+        loadedIndex.current = null;
+        setIndex(clamped);
+        if (s === 'finished') setState('paused');
+        saveProgress(clamped);
+      }
+    },
+    [playIndex, saveProgress, stopAudio, total],
+  );
+
+  const next = useCallback(() => seek(live.current.index + 1), [seek]);
+  const previous = useCallback(() => seek(live.current.index - 1), [seek]);
+
+  const setSpeed = useCallback((value: number) => {
+    setSpeedState(value);
+    live.current.speed = value;
+    const audio = audioRef.current;
+    if (audio) {
+      audio.defaultPlaybackRate = value;
+      audio.playbackRate = value;
+    }
   }, []);
 
-  const togglePlay = useCallback(() => {
-    if (isPlaying) {
-      pause();
-    } else {
-      play();
-    }
-  }, [isPlaying, play, pause]);
-
-  const skipForward = useCallback(() => {
-    if (currentIndex + 1 < sentences.length) {
-      const next = currentIndex + 1;
-      setCurrentIndex(next);
-      if (isPlaying) {
-        playSentence(next, speed);
-      }
-    }
-  }, [currentIndex, sentences.length, isPlaying, speed, playSentence]);
-
-  const skipBackward = useCallback(() => {
-    if (currentIndex - 1 >= 0) {
-      const prev = currentIndex - 1;
-      setCurrentIndex(prev);
-      if (isPlaying) {
-        playSentence(prev, speed);
-      }
-    }
-  }, [currentIndex, isPlaying, speed, playSentence]);
-
-  const seekToSentence = useCallback((index: number) => {
-    if (index >= 0 && index < sentences.length) {
-      setCurrentIndex(index);
-      if (isPlaying) {
-        playSentence(index, speed);
-      }
-    }
-  }, [sentences.length, isPlaying, speed, playSentence]);
-
-  const setSpeed = useCallback((newSpeed: number) => {
-    setSpeedState(newSpeed);
-    if (activeAudio.current) {
-      activeAudio.current.playbackRate = newSpeed;
-    }
-  }, []);
-
-  // Flush reading session on unmount
-  useEffect(() => {
-    return () => {
-      if (activeAudio.current) {
-        activeAudio.current.pause();
-      }
-      const dur = Math.max(1, Math.round(activeSeconds.current));
-      if (sentencesReadCount.current > 0 || dur > 3) {
-        recordReadingSession({
-          book_id: bookId,
-          duration_seconds: dur,
-          sentences_read: sentencesReadCount.current,
-          words_read: wordsReadCount.current,
-          start_time: sessionStart.current.toISOString(),
-          end_time: new Date().toISOString(),
-        }).catch(console.error);
-      }
-    };
-  }, [bookId]);
-
-  return {
-    currentIndex,
-    isPlaying,
-    isBuffering,
-    speed,
-    lastLatencySec,
-    play,
-    pause,
-    togglePlay,
-    skipForward,
-    skipBackward,
-    seekToSentence,
-    setSpeed,
-  };
+  return { index, state, speed, latencyMs, buffered, toggle, play, pause, seek, next, previous, setSpeed };
 }

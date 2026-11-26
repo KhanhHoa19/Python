@@ -3,16 +3,7 @@ export interface Bookmark {
   current_chapter: number;
   current_sentence_index: number;
   completion_percentage: number;
-  last_read_at?: string;
-}
-
-export interface AudioPlayerState {
-  isPlaying: boolean;
-  isBuffering: boolean;
-  currentIndex: number;
-  speed: number;
-  voice: string;
-  lastLatencySec: number;
+  last_read_at: string | null;
 }
 
 export interface ReadingSessionPayload {
@@ -23,3 +14,7 @@ export interface ReadingSessionPayload {
   start_time: string;
   end_time: string;
 }
+
+export type PlayerState = 'idle' | 'loading' | 'playing' | 'paused' | 'finished';
+
+export const SPEED_LEVELS = [0.75, 1.0, 1.25, 1.5] as const;

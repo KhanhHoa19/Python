@@ -7,3 +7,19 @@ export interface AnalyticsSummary {
   avg_tailscale_ping_ms: number;
   recent_sessions_count: number;
 }
+
+export interface DailyStat {
+  date: string;
+  minutes: number;
+  words: number;
+  sessions: number;
+}
+
+export interface Metrics {
+  total_calls: number;
+  avg_latency_ms: number;
+  p95_latency_ms: number;
+  max_latency_ms: number;
+  success_rate: number;
+  words_per_minute: number;
+}

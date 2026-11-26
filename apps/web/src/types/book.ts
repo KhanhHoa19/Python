@@ -5,7 +5,7 @@ export interface Book {
   total_chapters: number;
   total_sentences: number;
   total_words: number;
-  created_at: string;
+  created_at: string | null;
 }
 
 export interface BookSentence {
@@ -22,4 +22,9 @@ export interface BookUploadResponse {
   total_chapters: number;
   total_sentences: number;
   total_words: number;
+}
+
+/** A book together with its reading progress (for the library). */
+export interface BookWithProgress extends Book {
+  bookmark: import('./player.ts').Bookmark | null;
 }

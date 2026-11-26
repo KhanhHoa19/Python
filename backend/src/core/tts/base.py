@@ -17,6 +17,16 @@ class RateLimitError(TTSProviderError):
 
 
 @dataclass(frozen=True)
+class VoiceInfo:
+    """Describes a voice offered by a provider."""
+    voice_id: str
+    display_name: str
+    language: str = ""
+    gender: str | None = None
+    style: str | None = None
+
+
+@dataclass(frozen=True)
 class AudioSynthesisResult:
     """Represents the output and performance metrics of a speech synthesis request."""
     audio_bytes: bytes
@@ -64,3 +74,24 @@ class TTSProvider(ABC):
             RateLimitError: When API quota or rate limits are exceeded.
         """
         pass
+
+    @property
+    def supports_cloning(self) -> bool:
+        """Whether this provider can create a custom voice from an audio sample."""
+        return False
+
+    def list_voices(self) -> list[VoiceInfo]:
+        """Return the voices offered by the provider (empty if the provider cannot list them)."""
+        return []
+
+    def clone_voice(self, sample_path: str, name: str, language: str = "vi") -> str:
+        """Create a custom voice from a sample file and return its voice_id."""
+        raise TTSProviderError(f"Provider '{self.provider_name}' does not support voice cloning.")
+
+    def verify(self) -> None:
+        """Check credentials and connectivity by synthesizing a very short sentence.
+
+        Raises:
+            TTSProviderError: When the provider rejects the request or is unreachable.
+        """
+        self.synthesize("Xin chào.", voice=None, speed=1.0)

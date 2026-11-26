@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import Engine, text
@@ -148,6 +148,19 @@ class SqlBookRepository:
                 for r in rows
             ]
 
+    def delete_book(self, book_id: int) -> bool:
+        """Delete a book and all dependent rows. Returns False if the book does not exist."""
+        with self.engine.begin() as conn:
+            params = {"id": book_id}
+            if conn.execute(text("SELECT 1 FROM books WHERE id = :id"), params).fetchone() is None:
+                return False
+            # Explicit order: do not rely on FK cascade (SQLite has it disabled by default).
+            conn.execute(text("DELETE FROM network_metrics WHERE session_id IN (SELECT id FROM reading_sessions WHERE book_id = :id)"), params)
+            for table in ("reading_sessions", "bookmarks", "audio_notes", "book_sentences"):
+                conn.execute(text(f"DELETE FROM {table} WHERE book_id = :id"), params)  # noqa: S608
+            conn.execute(text("DELETE FROM books WHERE id = :id"), params)
+            return True
+
     def get_sentences(self, book_id: int, start_idx: int = 0, limit: int = 100) -> list[BookSentence]:
         """Fetch slice of sequential sentences for a book."""
         with self.engine.connect() as conn:
@@ -289,6 +302,35 @@ class SqlSessionRepository:
             ]
 
 
+    def get_daily_stats(self, days: int = 7) -> list[dict[str, Any]]:
+        """Return one row per calendar day for the last `days` days (zero-filled)."""
+        days = max(1, days)
+        today = datetime.now(UTC).date()
+        first_day = today - timedelta(days=days - 1)
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT DATE(start_time), SUM(duration_seconds), SUM(words_read), COUNT(id)
+                    FROM reading_sessions
+                    WHERE start_time >= :since
+                    GROUP BY DATE(start_time)
+                """),
+                {"since": first_day.strftime("%Y-%m-%d 00:00:00")},
+            ).fetchall()
+        by_day = {str(r[0]): r for r in rows}
+        result = []
+        for offset in range(days):
+            day = (first_day + timedelta(days=offset)).isoformat()
+            r = by_day.get(day)
+            result.append({
+                "date": day,
+                "minutes": round(float(r[1] or 0) / 60.0, 1) if r else 0.0,
+                "words": int(r[2] or 0) if r else 0,
+                "sessions": int(r[3] or 0) if r else 0,
+            })
+        return result
+
+
 class SqlTelemetryRepository:
     """Manages operational network and synthesis telemetry metrics."""
 
@@ -328,9 +370,10 @@ class SqlTelemetryRepository:
                 sess_params["book_id"] = book_id
 
             sess_row = conn.execute(text(sess_sql), sess_params).fetchone()
-            total_duration_sec = sess_row[0] or 0 if sess_row else 0
-            total_words = sess_row[1] or 0 if sess_row else 0
-            total_sessions = sess_row[2] or 0 if sess_row else 0
+            # MySQL returns Decimal for SUM(); normalise so arithmetic with floats works.
+            total_duration_sec = float(sess_row[0] or 0) if sess_row else 0.0
+            total_words = int(sess_row[1] or 0) if sess_row else 0
+            total_sessions = int(sess_row[2] or 0) if sess_row else 0
 
             # 2. Avg response time, LAN, Tailscale pings from network_metrics
             metric_sql = """
@@ -355,3 +398,164 @@ class SqlTelemetryRepository:
                 "avg_lan_ping_ms": round(avg_lan, 1),
                 "avg_tailscale_ping_ms": round(avg_tailscale, 1),
             }
+
+    def get_latency_stats(self, days: int = 7) -> dict[str, Any]:
+        """Return latency (ms) avg/p95/max and success rate from network_metrics."""
+        since = (datetime.now(UTC) - timedelta(days=max(1, days))).strftime("%Y-%m-%d %H:%M:%S")
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT response_time_seconds, status FROM network_metrics WHERE recorded_at >= :since"),
+                {"since": since},
+            ).fetchall()
+        latencies = sorted(float(r[0]) * 1000.0 for r in rows)
+        total = len(rows)
+        ok = sum(1 for r in rows if str(r[1]).upper() == "SUCCESS")
+        if not latencies:
+            return {"total_calls": 0, "avg_latency_ms": 0.0, "p95_latency_ms": 0.0, "max_latency_ms": 0.0, "success_rate": 0.0}
+        p95_index = min(len(latencies) - 1, max(0, int(round(0.95 * len(latencies))) - 1))
+        return {
+            "total_calls": total,
+            "avg_latency_ms": round(sum(latencies) / len(latencies), 1),
+            "p95_latency_ms": round(latencies[p95_index], 1),
+            "max_latency_ms": round(latencies[-1], 1),
+            "success_rate": round(ok / total * 100.0, 1),
+        }
+
+
+class SqlVoiceRepository:
+    """Persists custom (cloned) voice profiles."""
+
+    _COLS = "voice_id, provider, display_name, language, gender, style, is_custom, sample_path, consent_at"
+
+    def __init__(self, engine: Engine):
+        self.engine = engine
+
+    @staticmethod
+    def _row(r: Any) -> dict[str, Any]:
+        return {
+            "voice_id": r[0], "provider": r[1], "display_name": r[2], "language": r[3],
+            "gender": r[4], "style": r[5], "is_custom": bool(r[6]), "sample_path": r[7],
+            "consent_at": str(r[8]) if r[8] else None,
+        }
+
+    def add_voice(self, voice_id: str, provider: str, display_name: str, language: str,
+                  gender: str | None, sample_path: str | None, consent_at: datetime) -> None:
+        with self.engine.begin() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO voice_profiles (voice_id, provider, display_name, language, gender, is_custom, sample_path, consent_at)
+                    VALUES (:voice_id, :provider, :display_name, :language, :gender, 1, :sample_path, :consent_at)
+                """),
+                {"voice_id": voice_id, "provider": provider, "display_name": display_name,
+                 "language": language, "gender": gender, "sample_path": sample_path,
+                 "consent_at": consent_at.strftime("%Y-%m-%d %H:%M:%S")},
+            )
+
+    def list_voices(self) -> list[dict[str, Any]]:
+        with self.engine.connect() as conn:
+            rows = conn.execute(text(f"SELECT {self._COLS} FROM voice_profiles ORDER BY id DESC")).fetchall()  # noqa: S608
+        return [self._row(r) for r in rows]
+
+    def get_voice(self, voice_id: str) -> dict[str, Any] | None:
+        with self.engine.connect() as conn:
+            r = conn.execute(
+                text(f"SELECT {self._COLS} FROM voice_profiles WHERE voice_id = :v"), {"v": voice_id}  # noqa: S608
+            ).fetchone()
+        return self._row(r) if r else None
+
+    def delete_voice(self, voice_id: str) -> bool:
+        with self.engine.begin() as conn:
+            return conn.execute(text("DELETE FROM voice_profiles WHERE voice_id = :v"), {"v": voice_id}).rowcount > 0
+
+
+class SqlNoteRepository:
+    """Persists audio notes (highlighted excerpt + user note)."""
+
+    _SELECT = """
+        SELECT n.id, n.book_id, b.title, n.sentence_index, n.start_offset, n.end_offset, n.note_text, n.created_at
+        FROM audio_notes n JOIN books b ON b.id = n.book_id
+    """
+
+    def __init__(self, engine: Engine):
+        self.engine = engine
+
+    @staticmethod
+    def _row(r: Any) -> dict[str, Any]:
+        return {
+            "id": r[0], "book_id": r[1], "book_title": r[2], "sentence_index": r[3],
+            "start_offset": r[4], "end_offset": r[5], "note_text": r[6],
+            "created_at": r[7].isoformat() if isinstance(r[7], datetime) else str(r[7]),
+        }
+
+    def create_note(self, book_id: int, sentence_index: int, start_offset: int, end_offset: int, note_text: str) -> int:
+        with self.engine.begin() as conn:
+            result = conn.execute(
+                text("""
+                    INSERT INTO audio_notes (book_id, sentence_index, start_offset, end_offset, note_text)
+                    VALUES (:book_id, :sentence_index, :start_offset, :end_offset, :note_text)
+                """),
+                {"book_id": book_id, "sentence_index": sentence_index, "start_offset": start_offset,
+                 "end_offset": end_offset, "note_text": note_text},
+            )
+            note_id = result.lastrowid
+            if note_id is None:
+                note_id = conn.execute(text("SELECT last_insert_rowid()")).scalar()
+            return int(note_id)
+
+    def get_note(self, note_id: int) -> dict[str, Any] | None:
+        with self.engine.connect() as conn:
+            r = conn.execute(text(self._SELECT + " WHERE n.id = :id"), {"id": note_id}).fetchone()
+        return self._row(r) if r else None
+
+    def list_notes(self, book_id: int | None = None) -> list[dict[str, Any]]:
+        sql, params = self._SELECT, {}
+        if book_id is not None:
+            sql += " WHERE n.book_id = :book_id"
+            params["book_id"] = book_id
+        with self.engine.connect() as conn:
+            rows = conn.execute(text(sql + " ORDER BY n.id DESC"), params).fetchall()
+        return [self._row(r) for r in rows]
+
+    def update_note_text(self, note_id: int, note_text: str) -> bool:
+        with self.engine.begin() as conn:
+            return conn.execute(
+                text("UPDATE audio_notes SET note_text = :t WHERE id = :id"), {"t": note_text, "id": note_id}
+            ).rowcount > 0
+
+    def delete_note(self, note_id: int) -> bool:
+        with self.engine.begin() as conn:
+            return conn.execute(text("DELETE FROM audio_notes WHERE id = :id"), {"id": note_id}).rowcount > 0
+
+
+class SqlSettingsRepository:
+    """Key/value application settings and daily character usage counters."""
+
+    def __init__(self, engine: Engine):
+        self.engine = engine
+
+    def get(self, key: str, default: str | None = None) -> str | None:
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT setting_value FROM app_settings WHERE setting_key = :k"), {"k": key}
+            ).fetchone()
+        return row[0] if row else default
+
+    def set(self, key: str, value: str) -> None:
+        with self.engine.begin() as conn:
+            updated = conn.execute(
+                text("UPDATE app_settings SET setting_value = :v WHERE setting_key = :k"), {"k": key, "v": value}
+            ).rowcount
+            if updated == 0:
+                conn.execute(
+                    text("INSERT INTO app_settings (setting_key, setting_value) VALUES (:k, :v)"), {"k": key, "v": value}
+                )
+
+    @staticmethod
+    def _usage_key(day: datetime | None = None) -> str:
+        return f"chars_used:{(day or datetime.now(UTC)).strftime('%Y-%m-%d')}"
+
+    def chars_used_today(self) -> int:
+        return int(self.get(self._usage_key(), "0") or 0)
+
+    def add_chars_used(self, count: int) -> None:
+        self.set(self._usage_key(), str(self.chars_used_today() + max(0, count)))

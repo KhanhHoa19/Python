@@ -2,22 +2,23 @@
 
 from __future__ import annotations
 
-import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+
+from fastapi.testclient import TestClient
 
 from src.api.app import create_app
 
 
 def main() -> None:
     print("=== Running Quickstart End-to-End Validation Scenario ===")
-    app = create_app({"TESTING": True})
+    app = create_app()
 
-    with app.test_client() as client:
+    with TestClient(app) as client:
         # 1. Test GET /api/books (Catalog listing)
         resp = client.get("/api/books")
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        books = resp.get_json()
+        books = resp.json()
         print(f"[PASS] GET /api/books: {len(books)} books currently in catalog.")
 
         # 2. Test Ingesting sample text file
@@ -28,15 +29,11 @@ def main() -> None:
         with open(sample_path, "rb") as f:
             resp = client.post(
                 "/api/books/ingest",
-                data={
-                    "title": "The First Flight",
-                    "author": "Orville Wright",
-                    "file": (f, "test_sample.txt"),
-                },
-                content_type="multipart/form-data",
+                data={"title": "The First Flight", "author": "Orville Wright"},
+                files={"file": ("test_sample.txt", f)},
             )
-        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.data}"
-        book_data = resp.get_json()
+        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.content}"
+        book_data = resp.json()
         book_id = book_data["book_id"]
         total_sentences = book_data["total_sentences"]
         print(f"[PASS] POST /api/books/ingest -> Book ID {book_id}, sentences: {total_sentences}")
@@ -44,7 +41,7 @@ def main() -> None:
         # 3. Test GET /api/books/<book_id>/sentences (Text synchronization)
         resp = client.get(f"/api/books/{book_id}/sentences")
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        sentences_payload = resp.get_json()
+        sentences_payload = resp.json()
         sentences = sentences_payload["sentences"]
         assert len(sentences) == total_sentences
         print(f"[PASS] GET /api/books/{book_id}/sentences -> Fetched {len(sentences)} indexed sentences.")
@@ -52,7 +49,7 @@ def main() -> None:
         # 4. Test GET /api/bookmarks/<book_id> (Initial position restoration)
         resp = client.get(f"/api/bookmarks/{book_id}")
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        bookmark = resp.get_json()
+        bookmark = resp.json()
         print(f"[PASS] GET /api/bookmarks/{book_id} -> Position sentence index: {bookmark['current_sentence_index']}")
 
         # 5. Test POST /api/bookmarks (Auto-sync bookmark)
@@ -69,7 +66,7 @@ def main() -> None:
         print(f"[PASS] POST /api/bookmarks -> Saved progress for Book ID {book_id}")
 
         # 6. Test POST /api/sessions (Record reading telemetry)
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         resp = client.post(
             "/api/sessions",
             json={
@@ -87,22 +84,22 @@ def main() -> None:
         # 7. Test GET /api/analytics/summary (Dashboard KPIs)
         resp = client.get("/api/analytics/summary")
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        summary = resp.get_json()
+        summary = resp.json()
         print(f"[PASS] GET /api/analytics/summary -> Minutes: {summary['total_listening_minutes']}, Sessions: {summary['total_sessions']}")
 
         # 8. Test GET /api/analytics/charts/listening-trends.png (Headless Matplotlib)
         resp = client.get("/api/analytics/charts/listening-trends.png")
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert resp.content_type == "image/png"
-        assert len(resp.data) > 1000
-        print(f"[PASS] GET /api/analytics/charts/listening-trends.png -> Streamed {len(resp.data)} bytes PNG")
+        assert resp.headers["content-type"] == "image/png"
+        assert len(resp.content) > 1000
+        print(f"[PASS] GET /api/analytics/charts/listening-trends.png -> Streamed {len(resp.content)} bytes PNG")
 
         # 9. Test GET /api/analytics/charts/latency-metrics.png (Headless Matplotlib)
         resp = client.get("/api/analytics/charts/latency-metrics.png")
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert resp.content_type == "image/png"
-        assert len(resp.data) > 1000
-        print(f"[PASS] GET /api/analytics/charts/latency-metrics.png -> Streamed {len(resp.data)} bytes PNG")
+        assert resp.headers["content-type"] == "image/png"
+        assert len(resp.content) > 1000
+        print(f"[PASS] GET /api/analytics/charts/latency-metrics.png -> Streamed {len(resp.content)} bytes PNG")
 
     print("\n=======================================================")
     print("  ALL QUICKSTART SCENARIOS VERIFIED SUCCESSFULLY (PASS)")

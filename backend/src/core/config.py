@@ -49,6 +49,12 @@ class Settings(BaseModel):
         default_factory=lambda: os.getenv("AUDIO_CACHE_DIR", ".studylab/cache/audio")
     )
 
+    # Voice samples (cloning) and exported audio
+    voice_samples_dir: str = Field(
+        default_factory=lambda: os.getenv("VOICE_SAMPLES_DIR", ".studylab/voice_samples")
+    )
+    export_dir: str = Field(default_factory=lambda: os.getenv("EXPORT_DIR", ".studylab/exports"))
+
     def get_database_url(self) -> str:
         """Construct database connection string."""
         if self.db_use_sqlite or not self.db_host:

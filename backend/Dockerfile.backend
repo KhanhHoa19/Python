@@ -24,4 +24,4 @@ RUN mkdir -p /app/.studylab/cache/audio
 
 EXPOSE 5000
 
-CMD ["sh", "-c", "python -m src.core.storage.migrations && python -m src.api.app"]
+CMD ["sh", "-c", "python -m src.core.storage.migrations && uvicorn src.api.app:app --host 0.0.0.0 --port 5000"]

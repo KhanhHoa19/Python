@@ -40,7 +40,7 @@ Mở app lần đầu: vào **Thư Viện** nếu chưa có tài liệu; nếu c
 - **Ngôn ngữ giao diện:** tiếng Việt. Dùng đúng chuỗi trong mockup để hai client giống nhau.
 - **Trạng thái bắt buộc ở mọi màn:** `loading` (đang tải), `empty` (chưa có dữ liệu), `error` (lỗi, có nút *Thử lại*), `ready`.
 - **Lỗi mạng/backend:** thanh cảnh báo đỏ trên cùng: `Không kết nối được máy chủ. [Thử lại]`.
-- **Tốc độ đọc:** 0.75x / 1.0x / 1.25x / 1.5x, xử lý ở client; backend luôn sinh audio 1.0x.
+- **Tốc độ đọc:** 0.75x / 1.0x / 1.25x / 1.5x. Desktop gửi `speed=` lên backend (giữ cao độ giọng với edge-tts; audio cache riêng từng mức tốc độ). Web có thể dùng `audio.playbackRate`; hành vi nhìn thấy phải giống nhau.
 - **Phím tắt (S03):** `Space` phát/dừng, `←` `→` câu trước/sau, `↑` `↓` đổi tốc độ, `N` ghi chú nhanh.
 - **Mốc thời gian:** hiển thị `dd/mm/yyyy HH:MM`; thời lượng `mm:ss`.
 - Ký hiệu trong khung ASCII: `[ Nút ]`, `( ) / (•)` radio, `[ ] / [x]` checkbox, `▼` dropdown, `░▓` thanh tiến độ.
@@ -52,7 +52,7 @@ Mở app lần đầu: vào **Thư Viện** nếu chưa có tài liệu; nếu c
 | Danh sách / tìm / xóa tài liệu | S01 | `GET/DELETE /api/books` | Lưới thẻ | Danh sách bảng |
 | Tải tài liệu lên | S02 | `POST /api/books/ingest` | Kéo thả / chọn file | Hộp thoại chọn file |
 | Phát / dừng / câu trước / sau / nhảy câu | S03 | `GET /api/audio/{book}/{idx}` | `<audio>` + prefetch | pygame + Producer/Consumer |
-| Đổi tốc độ | S03 | (client) | `playbackRate` | resample client |
+| Đổi tốc độ | S03 | `GET /api/audio/...?speed=` | `playbackRate` hoặc `speed=` | gửi `speed=` |
 | Karaoke highlight | S03 | `GET /api/books/{id}/sentences` | CSS class | tag trong textbox |
 | Auto-Bookmark / Tiếp tục đọc | S03 | `GET/POST /api/bookmarks` | ✔ | ✔ |
 | Ghi log phiên đọc | S03 | `POST /api/sessions` | `onended` | consumer |
@@ -63,7 +63,7 @@ Mở app lần đầu: vào **Thư Viện** nếu chưa có tài liệu; nếu c
 | Xuất audio | S07 | `POST /api/books/{id}/export` *(mới)* | Tải về | Lưu file |
 | Thống kê | S08 | `GET /api/analytics/...` | Chart.js | Matplotlib |
 
-> *(mới)* = endpoint chưa có trong backend hiện tại (xem `docs/specs/002-fullstack-web-player/contracts/rest-api-endpoints.md`), sẽ làm theo kế hoạch.
+> Trạng thái endpoint: tất cả endpoint trong bảng đã có trong backend FastAPI (`/docs` liệt kê đầy đủ), **trừ** thống kê theo giọng `GET /api/analytics/voices` (S08) vì phiên đọc chưa ghi lại giọng. Dấu *(mới)* chỉ để đánh dấu endpoint thêm sau hợp đồng cũ `docs/specs/002-fullstack-web-player/contracts/rest-api-endpoints.md`.
 
 ## Cách dùng bộ mockup
 

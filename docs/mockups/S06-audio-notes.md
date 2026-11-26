@@ -37,7 +37,7 @@
 - **loading / error** như README.
 - Hộp tạo ghi chú: nút `Lưu ghi chú` khóa khi chưa chọn đoạn; ghi chú trống vẫn lưu được (chỉ đánh dấu).
 
-## API *(đều mới)*
+## API
 `GET /api/notes?book_id=` · `POST /api/notes` (`book_id`, `sentence_index`, `start_offset`, `end_offset`, `note_text`) · `PATCH /api/notes/{id}` · `DELETE /api/notes/{id}` · `GET /api/notes/{id}/audio`.
 
 ## Ghi chú theo client

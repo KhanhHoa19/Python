@@ -38,7 +38,7 @@
 
 ## API
 `POST /api/books/ingest` (multipart: `file`, `title`, `author`) → `201 {book_id, total_sentences,…}`.
-> Backend hiện chỉ nhận `.txt/.md`; PDF/DOCX nằm trong kế hoạch giai đoạn 2.
+> Backend nhận `.txt .md .pdf .docx` (≤ 10 MB). PDF scan không có chữ trả `400` với thông điệp nhắc OCR.
 
 ## Ghi chú theo client
 - **Web:** kéo thả HTML5 + `<input type=file>`.

@@ -5,7 +5,7 @@
 
 ## Architecture: Shared Backend Client
 - The Desktop App and Web Frontend (`apps/web/`) **share the same backend (`backend/src/api/`) and MySQL database**.
-- Communicate with the Flask REST API (`API_BASE_URL` from `.env`, default `http://127.0.0.1:5000`) via a dedicated API client module (`apps/desktop/api_client.py`) using `requests` or `httpx` with explicit timeouts.
+- Communicate with the FastAPI REST API (`API_BASE_URL` from `.env`, default `http://127.0.0.1:5000`) via a dedicated API client module (`apps/desktop/api_client.py`) using `requests` or `httpx` with explicit timeouts.
 - **Never** duplicate business logic (text chunking, SQL queries, TTS HTTP calls) inside Tkinter UI files.
 
 ## UI Structure (3 Main Tabs)

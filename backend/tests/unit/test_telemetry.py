@@ -7,10 +7,10 @@ from unittest.mock import MagicMock, patch
 
 from sqlalchemy import Engine
 
-from src.models.session import ReadingSession
-from src.storage.repositories import SqlSessionRepository, SqlTelemetryRepository
-from src.telemetry.collector import TelemetryCollector
-from src.telemetry.network_probe import NetworkProbe
+from src.core.models.session import ReadingSession
+from src.core.storage.repositories import SqlSessionRepository, SqlTelemetryRepository
+from src.core.telemetry.collector import TelemetryCollector
+from src.core.telemetry.network_probe import NetworkProbe
 
 
 def test_network_probe_measure_rtt_success() -> None:

@@ -27,12 +27,18 @@ def get_db_engine(settings: Settings | None = None, force_new: bool = False) -> 
     db_url = cfg.get_database_url()
 
     if db_url.startswith("sqlite"):
-        engine = create_engine(
-            db_url,
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
-            echo=False,
-        )
+        in_memory = db_url in ("sqlite://", "sqlite:///:memory:") or ":memory:" in db_url
+        if in_memory:
+            # One shared connection is the only way an in-memory DB survives across threads.
+            engine = create_engine(
+                db_url, connect_args={"check_same_thread": False}, poolclass=StaticPool, echo=False
+            )
+        else:
+            # File DB: one connection per use. A single shared connection is not safe when
+            # concurrent requests (audio prefetch + bookmark saves) hit it from several threads.
+            engine = create_engine(
+                db_url, connect_args={"check_same_thread": False, "timeout": 15}, echo=False
+            )
     else:
         # MySQL connection with connection pooling
         engine = create_engine(

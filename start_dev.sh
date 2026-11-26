@@ -35,9 +35,9 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM
 
-# 3. Start Flask REST API backend
-echo "Starting Flask REST API on http://localhost:5000..."
-$PYTHON -m src.api.app &
+# 3. Start FastAPI REST API backend
+echo "Starting FastAPI (uvicorn) on http://localhost:5000..."
+$PYTHON -m uvicorn src.api.app:app --port 5000 --reload &
 BACKEND_PID=$!
 
 # Wait briefly for backend to bind port

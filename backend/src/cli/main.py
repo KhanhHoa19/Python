@@ -54,7 +54,7 @@ def create_parser() -> argparse.ArgumentParser:
 
 def handle_ingest(args: argparse.Namespace) -> int:
     """Execute book ingestion."""
-    from src.ingestion.service import IngestionService
+    from src.core.ingestion.service import IngestionService
     service = IngestionService()
     try:
         book = service.ingest_file(args.file_path, title=args.title, author=args.author)
@@ -86,8 +86,8 @@ def handle_list(args: argparse.Namespace) -> int:
     """List cataloged books."""
     from rich.table import Table
 
-    from src.storage.db import get_db_engine
-    from src.storage.repositories import SqlBookRepository
+    from src.core.storage.db import get_db_engine
+    from src.core.storage.repositories import SqlBookRepository
 
     repo = SqlBookRepository(get_db_engine())
     try:
@@ -150,8 +150,8 @@ def handle_metrics(args: argparse.Namespace) -> int:
     """Display session history and network telemetry."""
     from rich.table import Table
 
-    from src.storage.db import get_db_engine
-    from src.storage.repositories import SqlTelemetryRepository
+    from src.core.storage.db import get_db_engine
+    from src.core.storage.repositories import SqlTelemetryRepository
 
     repo = SqlTelemetryRepository(get_db_engine())
     try:

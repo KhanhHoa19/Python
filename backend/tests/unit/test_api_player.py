@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from flask.testing import FlaskClient
+from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
 from src.api.app import create_app
@@ -16,28 +16,28 @@ from src.core.storage.repositories import SqlBookRepository
 
 
 @pytest.fixture
-def app_client(test_engine: Engine) -> Generator[FlaskClient, None, None]:
-    """Create Flask test client with in-memory database engine."""
+def app_client(test_engine: Engine) -> Generator[TestClient, None, None]:
+    """Create FastAPI test client with in-memory database engine."""
     with patch("src.api.routes.player.get_db_engine", return_value=test_engine), \
          patch("src.api.routes.books.get_db_engine", return_value=test_engine):
-        app = create_app({"TESTING": True})
-        with app.test_client() as client:
+        app = create_app()
+        with TestClient(app) as client:
             yield client
 
 
-def test_audio_stream_missing_book(app_client: FlaskClient) -> None:
+def test_audio_stream_missing_book(app_client: TestClient) -> None:
     """Test requesting audio for non-existent book returns 404."""
     resp = app_client.get("/api/audio/999/0")
     assert resp.status_code == 404
 
 
-def test_audio_stream_invalid_speed(app_client: FlaskClient) -> None:
+def test_audio_stream_invalid_speed(app_client: TestClient) -> None:
     """Test requesting audio with out-of-range speed returns 400."""
     resp = app_client.get("/api/audio/1/0?speed=5.0")
     assert resp.status_code == 400
 
 
-def test_audio_stream_success(app_client: FlaskClient, test_engine: Engine, tmp_path: Path) -> None:
+def test_audio_stream_success(app_client: TestClient, test_engine: Engine, tmp_path: Path) -> None:
     """Test successful audio synthesis streaming."""
     book_repo = SqlBookRepository(test_engine)
     book = Book(
@@ -72,5 +72,5 @@ def test_audio_stream_success(app_client: FlaskClient, test_engine: Engine, tmp_
 
         resp = app_client.get(f"/api/audio/{book_id}/0")
         assert resp.status_code == 200
-        assert resp.content_type == "audio/mpeg"
-        assert resp.data == b"ID3dummy-mp3-bytes-content"
+        assert resp.headers["content-type"] == "audio/mpeg"
+        assert resp.content == b"ID3dummy-mp3-bytes-content"

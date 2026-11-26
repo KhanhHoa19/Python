@@ -9,7 +9,13 @@ import time
 
 import edge_tts
 
-from src.core.tts.base import AudioSynthesisResult, RateLimitError, TTSProvider, TTSProviderError
+from src.core.tts.base import (
+    AudioSynthesisResult,
+    RateLimitError,
+    TTSProvider,
+    TTSProviderError,
+    VoiceInfo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -98,3 +104,22 @@ class EdgeTTSProvider(TTSProvider):
                 raise RateLimitError(f"Edge-TTS rate limit exceeded: {exc}") from exc
             logger.error(f"Edge-TTS synthesis error after {elapsed:.2f}s: {exc}")
             raise TTSProviderError(f"Speech synthesis failed: {exc}") from exc
+
+    def list_voices(self) -> list[VoiceInfo]:
+        """List Edge-TTS voices, Vietnamese first."""
+        try:
+            raw = asyncio.run(edge_tts.list_voices())
+        except Exception as exc:
+            raise TTSProviderError(f"Could not list Edge-TTS voices: {exc}") from exc
+        voices = [
+            VoiceInfo(
+                voice_id=v["ShortName"],
+                display_name=v.get("FriendlyName", v["ShortName"]),
+                language=v.get("Locale", ""),
+                gender=(v.get("Gender") or "").lower() or None,
+                style=", ".join(v.get("VoiceTag", {}).get("ContentCategories", [])) or None,
+            )
+            for v in raw
+        ]
+        voices.sort(key=lambda v: (not v.language.startswith("vi"), v.language, v.voice_id))
+        return voices

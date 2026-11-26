@@ -36,8 +36,8 @@
 - **provider không hỗ trợ clone:** nút `+ Thêm giọng mới` bị khóa kèm chú thích `Nhà cung cấp hiện tại không hỗ trợ tạo giọng.` (lấy từ `capabilities`).
 - **thành công:** toast `Đã tạo giọng "<tên>"`, tự chọn giọng đó ở S03.
 
-## API *(đều mới)*
-`GET /api/voices` · `POST /api/voices/sync` · `POST /api/voices/clone` (multipart: `sample`, `name`, `language`, `gender`, `consent=true`) · `DELETE /api/voices/{id}` · `GET /api/voices/{id}/preview`.
+## API
+`GET /api/voices` (trả `supports_cloning`, `warning` nếu provider không liệt kê được giọng) · `POST /api/voices/clone` (multipart: `sample`, `name`, `language`, `gender`, `consent=true`) · `DELETE /api/voices/{id}` · `GET /api/voices/{id}/preview`. Clone trả `501` nếu provider không hỗ trợ, `400` nếu thiếu đồng thuận hoặc mẫu WAV ngoài 5–15 giây.
 
 ## Ghi chú theo client
 - **Web:** modal; `<input type=file accept="audio/*">`.

@@ -2,9 +2,9 @@
 
 | Thư mục | Nội dung |
 |---------|----------|
-| `backend/` | Flask API + core (gói `src`), tests, Dockerfile |
-| `apps/web/` | Web React + Vite + TS |
-| `apps/desktop/` | Desktop CustomTkinter (chưa có code) |
+| `backend/` | FastAPI API + core (gói `src`), tests, Dockerfile |
+| `apps/web/` | Web React + Vite + TS (8 màn hình S01–S08; `npm test`, `npm run build`) |
+| `apps/desktop/` | Desktop CustomTkinter (8 màn hình S01–S08, xem `apps/desktop/README.md`) |
 | `packages/py-shared/` | Schema + API client dùng chung (chưa có code) |
 | `storage/` | uploads, audio_cache, exports, voice_samples (không commit) |
 | `db/` | schema.sql (sẽ xuất từ migration) |

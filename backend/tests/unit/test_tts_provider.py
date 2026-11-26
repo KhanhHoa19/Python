@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.tts.base import TTSProvider, TTSProviderError
-from src.tts.factory import TTSFactory
+from src.core.tts.base import TTSProvider, TTSProviderError
+from src.core.tts.factory import TTSFactory
 from tests.conftest import MockTTSProvider
 
 

@@ -1,4 +1,4 @@
-"""Books API blueprint: catalog listing, sentence retrieval, and file ingestion."""
+"""Books API router: catalog listing, sentence retrieval, and file ingestion."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from flask import Blueprint, jsonify, request
+from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
+from fastapi.responses import JSONResponse
 
 from src.api.schemas.book_schemas import (
     BookDetailResponse,
@@ -18,12 +19,16 @@ from src.api.schemas.book_schemas import (
     BookUploadSuccessResponse,
 )
 from src.core.ingestion.service import IngestionService
+from src.core.player.cache_manager import AudioCacheManager
 from src.core.storage.db import get_db_engine
 from src.core.storage.repositories import SqlBookRepository
 
 logger = logging.getLogger(__name__)
 
-books_bp = Blueprint("books", __name__)
+router = APIRouter(tags=["books"])
+
+_ALLOWED_UPLOADS = {".txt", ".md", ".pdf", ".docx"}
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
 def _format_dt(val: Any) -> str | None:
@@ -34,17 +39,11 @@ def _format_dt(val: Any) -> str | None:
     return str(val)
 
 
-@books_bp.route("", methods=["GET"])
-def list_books() -> Any:
+@router.get("", response_model=list[BookSummaryResponse])
+def list_books(limit: int = 50, offset: int = 0) -> list[BookSummaryResponse]:
     """List all cataloged books with pagination."""
-    limit = int(request.args.get("limit", 50))
-    offset = int(request.args.get("offset", 0))
-
-    engine = get_db_engine()
-    book_repo = SqlBookRepository(engine)
-    books = book_repo.list_books(limit=limit, offset=offset)
-
-    result = [
+    book_repo = SqlBookRepository(get_db_engine())
+    return [
         BookSummaryResponse(
             id=b.id or 0,
             title=b.title,
@@ -53,114 +52,105 @@ def list_books() -> Any:
             total_sentences=b.total_sentences,
             total_words=b.total_words,
             created_at=_format_dt(b.created_at),
-        ).model_dump()
-        for b in books
+        )
+        for b in book_repo.list_books(limit=limit, offset=offset)
     ]
-    return jsonify(result)
 
 
-@books_bp.route("/<int:book_id>", methods=["GET"])
-def get_book_detail(book_id: int) -> Any:
+@router.get("/{book_id}", response_model=BookDetailResponse)
+def get_book_detail(book_id: int) -> BookDetailResponse:
     """Retrieve detailed metadata for a book."""
-    engine = get_db_engine()
-    book_repo = SqlBookRepository(engine)
-    book = book_repo.get_book(book_id)
+    book = SqlBookRepository(get_db_engine()).get_book(book_id)
     if not book:
-        return jsonify({"error": f"Book {book_id} not found"}), 404
-
-    return jsonify(
-        BookDetailResponse(
-            id=book.id or 0,
-            title=book.title,
-            author=book.author,
-            source_path=book.source_path,
-            content_hash=book.content_hash,
-            total_chapters=book.total_chapters,
-            total_sentences=book.total_sentences,
-            total_words=book.total_words,
-            created_at=_format_dt(book.created_at),
-        ).model_dump()
+        raise HTTPException(404, f"Book {book_id} not found")
+    return BookDetailResponse(
+        id=book.id or 0,
+        title=book.title,
+        author=book.author,
+        source_path=book.source_path,
+        content_hash=book.content_hash,
+        total_chapters=book.total_chapters,
+        total_sentences=book.total_sentences,
+        total_words=book.total_words,
+        created_at=_format_dt(book.created_at),
     )
 
 
-@books_bp.route("/<int:book_id>/sentences", methods=["GET"])
-def get_book_sentences(book_id: int) -> Any:
-    """Fetch all indexed sentences for a book for text synchronization."""
-    engine = get_db_engine()
-    book_repo = SqlBookRepository(engine)
+@router.delete("/{book_id}", status_code=204)
+def delete_book(book_id: int) -> Response:
+    """Delete a book with its sentences, bookmark, sessions, notes and cached audio."""
+    if not SqlBookRepository(get_db_engine()).delete_book(book_id):
+        raise HTTPException(404, f"Book {book_id} not found")
+    AudioCacheManager().clear_book_cache(book_id)
+    return Response(status_code=204)
 
-    book = book_repo.get_book(book_id)
-    if not book:
-        return jsonify({"error": f"Book {book_id} not found"}), 404
+
+@router.get("/{book_id}/sentences", response_model=BookSentencesListResponse)
+def get_book_sentences(book_id: int) -> BookSentencesListResponse:
+    """Fetch all indexed sentences for a book for text synchronization."""
+    book_repo = SqlBookRepository(get_db_engine())
+    if not book_repo.get_book(book_id):
+        raise HTTPException(404, f"Book {book_id} not found")
 
     sentences = book_repo.get_book_sentences(book_id)
-    return jsonify(
-        BookSentencesListResponse(
-            book_id=book_id,
-            total_sentences=len(sentences),
-            sentences=[
-                BookSentenceResponse(
-                    sentence_index=s.sentence_index,
-                    chapter_index=s.chapter_index,
-                    text_content=s.text_content,
-                    word_count=s.word_count,
-                )
-                for s in sentences
-            ],
-        ).model_dump()
+    return BookSentencesListResponse(
+        book_id=book_id,
+        total_sentences=len(sentences),
+        sentences=[
+            BookSentenceResponse(
+                sentence_index=s.sentence_index,
+                chapter_index=s.chapter_index,
+                text_content=s.text_content,
+                word_count=s.word_count,
+            )
+            for s in sentences
+        ],
     )
 
 
-@books_bp.route("/ingest", methods=["POST"])
-def ingest_book_file() -> Any:
+@router.post("/ingest", status_code=201, response_model=BookUploadSuccessResponse)
+def ingest_book_file(
+    file: UploadFile | None = File(None),
+    title: str | None = Form(None),
+    author: str | None = Form(None),
+) -> Any:
     """Upload and catalog a text or markdown book file."""
-    if "file" not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
+    if file is None:
+        raise HTTPException(400, "No file uploaded")
+    if not file.filename:
+        raise HTTPException(400, "Empty filename")
 
-    uploaded_file = request.files["file"]
-    if not uploaded_file.filename:
-        return jsonify({"error": "Empty filename"}), 400
+    filename = file.filename.lower()
+    suffix = Path(filename).suffix
+    if suffix not in _ALLOWED_UPLOADS:
+        raise HTTPException(
+            400, "Unsupported file format. Only .txt, .md, .pdf and .docx files are supported."
+        )
 
-    filename = uploaded_file.filename.lower()
-    if not (filename.endswith(".txt") or filename.endswith(".md")):
-        return jsonify({"error": "Unsupported file format. Only .txt and .md files are supported."}), 400
+    title = title or Path(file.filename).stem.replace("_", " ").title()
+    author = author or "Unknown"
 
-    title = request.form.get("title") or Path(uploaded_file.filename).stem.replace("_", " ").title()
-    author = request.form.get("author") or "Unknown"
-
-    # Save to temporary file for parsing
-    suffix = ".txt" if filename.endswith(".txt") else ".md"
+    content = file.file.read(_MAX_UPLOAD_BYTES + 1)
+    if len(content) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(400, "File exceeds 10 MB.")
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
-        uploaded_file.save(temp_file.name)
+        temp_file.write(content)
         temp_path = temp_file.name
 
     try:
-        engine = get_db_engine()
-        ingestion_service = IngestionService(
-            book_repo=SqlBookRepository(engine),
+        service = IngestionService(book_repo=SqlBookRepository(get_db_engine()))
+        book = service.ingest_file(file_path=temp_path, title=title, author=author)
+        return BookUploadSuccessResponse(
+            book_id=book.id or 0,
+            title=book.title,
+            total_chapters=book.total_chapters,
+            total_sentences=book.total_sentences,
+            total_words=book.total_words,
         )
-        book = ingestion_service.ingest_file(
-            file_path=temp_path,
-            title=title,
-            author=author,
-        )
-        return (
-            jsonify(
-                BookUploadSuccessResponse(
-                    book_id=book.id or 0,
-                    title=book.title,
-                    total_chapters=book.total_chapters,
-                    total_sentences=book.total_sentences,
-                    total_words=book.total_words,
-                ).model_dump()
-            ),
-            201,
-        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         logger.error(f"Book ingestion failed: {exc}")
-        return jsonify({"error": f"Failed to ingest book: {exc}"}), 500
+        return JSONResponse({"error": f"Failed to ingest book: {exc}"}, status_code=500)
     finally:
-        try:
-            Path(temp_path).unlink(missing_ok=True)
-        except Exception:
-            pass
+        Path(temp_path).unlink(missing_ok=True)

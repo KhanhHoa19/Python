@@ -6,7 +6,7 @@ from collections.abc import Generator
 from unittest.mock import patch
 
 import pytest
-from flask.testing import FlaskClient
+from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
 from src.api.app import create_app
@@ -15,25 +15,25 @@ from src.core.storage.repositories import SqlBookRepository
 
 
 @pytest.fixture
-def app_client(test_engine: Engine) -> Generator[FlaskClient, None, None]:
-    """Create Flask test client with in-memory database engine."""
+def app_client(test_engine: Engine) -> Generator[TestClient, None, None]:
+    """Create FastAPI test client with in-memory database engine."""
     with patch("src.api.routes.player.get_db_engine", return_value=test_engine):
-        app = create_app({"TESTING": True})
-        with app.test_client() as client:
+        app = create_app()
+        with TestClient(app) as client:
             yield client
 
 
-def test_get_bookmark_defaults_for_new_book(app_client: FlaskClient) -> None:
+def test_get_bookmark_defaults_for_new_book(app_client: TestClient) -> None:
     """Test fetching bookmark for book without history returns default 0 index."""
     resp = app_client.get("/api/bookmarks/999")
     assert resp.status_code == 200
-    data = resp.get_json()
+    data = resp.json()
     assert data["book_id"] == 999
     assert data["current_sentence_index"] == 0
     assert data["completion_percentage"] == 0.0
 
 
-def test_update_and_get_bookmark(app_client: FlaskClient, test_engine: Engine) -> None:
+def test_update_and_get_bookmark(app_client: TestClient, test_engine: Engine) -> None:
     """Test updating bookmark position and verifying retrieval."""
     book_repo = SqlBookRepository(test_engine)
     book = Book(
@@ -57,18 +57,18 @@ def test_update_and_get_bookmark(app_client: FlaskClient, test_engine: Engine) -
     }
     post_resp = app_client.post("/api/bookmarks", json=update_payload)
     assert post_resp.status_code == 200
-    assert post_resp.get_json()["status"] == "updated"
+    assert post_resp.json()["status"] == "updated"
 
     # Get updated bookmark
     get_resp = app_client.get(f"/api/bookmarks/{book_id}")
     assert get_resp.status_code == 200
-    bm = get_resp.get_json()
+    bm = get_resp.json()
     assert bm["book_id"] == book_id
     assert bm["current_sentence_index"] == 4
     assert bm["completion_percentage"] == 40.0
 
 
-def test_record_reading_session(app_client: FlaskClient, test_engine: Engine) -> None:
+def test_record_reading_session(app_client: TestClient, test_engine: Engine) -> None:
     """Test posting a reading session row."""
     payload = {
         "book_id": 1,
@@ -80,7 +80,7 @@ def test_record_reading_session(app_client: FlaskClient, test_engine: Engine) ->
     }
     resp = app_client.post("/api/sessions", json=payload)
     assert resp.status_code == 201
-    body = resp.get_json()
+    body = resp.json()
     assert body["book_id"] == 1
     assert body["duration_seconds"] == 120
     assert body["sentences_read"] == 8

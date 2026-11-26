@@ -1,4 +1,4 @@
-"""Database schema migration runner creating books, book_sentences, bookmarks, reading_sessions, and network_metrics tables."""
+"""Database schema migration runner (books, sentences, bookmarks, sessions, metrics, voices, notes, settings)."""
 
 from __future__ import annotations
 
@@ -79,6 +79,40 @@ MYSQL_TABLES = [
         FOREIGN KEY (session_id) REFERENCES reading_sessions (id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     """,
+    """
+    CREATE TABLE IF NOT EXISTS voice_profiles (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        voice_id VARCHAR(255) NOT NULL UNIQUE,
+        provider VARCHAR(64) NOT NULL,
+        display_name VARCHAR(255) NOT NULL,
+        language VARCHAR(16) NOT NULL DEFAULT 'vi',
+        gender VARCHAR(16) DEFAULT NULL,
+        style VARCHAR(64) DEFAULT NULL,
+        is_custom TINYINT(1) NOT NULL DEFAULT 1,
+        sample_path VARCHAR(1024) DEFAULT NULL,
+        consent_at DATETIME DEFAULT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS audio_notes (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        book_id INT NOT NULL,
+        sentence_index INT NOT NULL,
+        start_offset INT NOT NULL,
+        end_offset INT NOT NULL,
+        note_text TEXT NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_notes_book (book_id),
+        FOREIGN KEY (book_id) REFERENCES books (id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS app_settings (
+        setting_key VARCHAR(128) PRIMARY KEY,
+        setting_value VARCHAR(1024) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """,
 ]
 
 SQLITE_TABLES = [
@@ -145,6 +179,39 @@ SQLITE_TABLES = [
         status TEXT NOT NULL DEFAULT 'SUCCESS',
         recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (session_id) REFERENCES reading_sessions (id) ON DELETE CASCADE
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS voice_profiles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        voice_id TEXT NOT NULL UNIQUE,
+        provider TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        language TEXT NOT NULL DEFAULT 'vi',
+        gender TEXT DEFAULT NULL,
+        style TEXT DEFAULT NULL,
+        is_custom INTEGER NOT NULL DEFAULT 1,
+        sample_path TEXT DEFAULT NULL,
+        consent_at TIMESTAMP DEFAULT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS audio_notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        book_id INTEGER NOT NULL,
+        sentence_index INTEGER NOT NULL,
+        start_offset INTEGER NOT NULL,
+        end_offset INTEGER NOT NULL,
+        note_text TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (book_id) REFERENCES books (id) ON DELETE CASCADE
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS app_settings (
+        setting_key TEXT PRIMARY KEY,
+        setting_value TEXT NOT NULL
     );
     """,
 ]

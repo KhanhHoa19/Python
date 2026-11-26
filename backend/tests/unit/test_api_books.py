@@ -6,7 +6,7 @@ from collections.abc import Generator
 from unittest.mock import patch
 
 import pytest
-from flask.testing import FlaskClient
+from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
 from src.api.app import create_app
@@ -15,21 +15,21 @@ from src.core.storage.repositories import SqlBookRepository
 
 
 @pytest.fixture
-def app_client(test_engine: Engine) -> Generator[FlaskClient, None, None]:
-    """Create Flask test client with in-memory database engine."""
+def app_client(test_engine: Engine) -> Generator[TestClient, None, None]:
+    """Create FastAPI test client with in-memory database engine."""
     with patch("src.api.routes.books.get_db_engine", return_value=test_engine):
-        app = create_app({"TESTING": True})
-        with app.test_client() as client:
+        app = create_app()
+        with TestClient(app) as client:
             yield client
 
 
-def test_get_book_sentences_not_found(app_client: FlaskClient) -> None:
+def test_get_book_sentences_not_found(app_client: TestClient) -> None:
     """Test fetching sentences for missing book returns 404."""
     resp = app_client.get("/api/books/999/sentences")
     assert resp.status_code == 404
 
 
-def test_get_book_sentences_success(app_client: FlaskClient, test_engine: Engine) -> None:
+def test_get_book_sentences_success(app_client: TestClient, test_engine: Engine) -> None:
     """Test fetching sentence list for an ingested book."""
     book_repo = SqlBookRepository(test_engine)
     book = Book(
@@ -66,7 +66,7 @@ def test_get_book_sentences_success(app_client: FlaskClient, test_engine: Engine
 
     resp = app_client.get(f"/api/books/{book_id}/sentences")
     assert resp.status_code == 200
-    data = resp.get_json()
+    data = resp.json()
     assert data["book_id"] == book_id
     assert data["total_sentences"] == 2
     assert len(data["sentences"]) == 2

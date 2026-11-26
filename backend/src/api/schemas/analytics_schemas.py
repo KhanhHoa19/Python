@@ -13,3 +13,19 @@ class AnalyticsSummaryResponse(BaseModel):
     avg_lan_ping_ms: float
     avg_tailscale_ping_ms: float
     recent_sessions_count: int
+
+
+class DailyStat(BaseModel):
+    date: str
+    minutes: float
+    words: int
+    sessions: int
+
+
+class MetricsResponse(BaseModel):
+    total_calls: int
+    avg_latency_ms: float
+    p95_latency_ms: float
+    max_latency_ms: float
+    success_rate: float
+    words_per_minute: float

@@ -1,6 +1,6 @@
 # Backend Conventions — `backend/src/api` & `backend/src/core`
 
-> Applies to `backend/src/api/` (Flask REST API + Pydantic), `backend/src/core/` (business logic), and `backend/src/cli/`.
+> Applies to `backend/src/api/` (FastAPI REST API + Pydantic), `backend/src/core/` (business logic), and `backend/src/cli/`.
 > Read alongside `docs/conventions/common.md`.
 > **Canonical references:** Copy patterns from `backend/src/api/routes/books.py`, `backend/src/api/schemas/book_schemas.py`, and `backend/src/core/ingestion/service.py`.
 

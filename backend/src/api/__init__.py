@@ -1,1 +1,1 @@
-"""Flask REST API package."""
+"""FastAPI REST API package."""

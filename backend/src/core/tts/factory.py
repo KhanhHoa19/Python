@@ -33,6 +33,10 @@ class TTSFactory:
         name = (provider_name or cfg.tts_provider).lower()
         default_voice = voice or cfg.tts_default_voice
 
+        if name == "mock":
+            from src.core.tts.mock_adapter import MockProvider
+            return MockProvider(default_voice=voice or "mock-vi-female")
+
         if name in ("edge", "edge-tts", "edgetts"):
             from src.core.tts.edge_tts_adapter import EdgeTTSProvider
             return EdgeTTSProvider(default_voice=default_voice)

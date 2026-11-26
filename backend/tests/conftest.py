@@ -51,7 +51,7 @@ class MockTTSProvider(TTSProvider):
         speed: float = 1.0,
     ) -> AudioSynthesisResult:
         if self.should_fail:
-            from src.tts.base import TTSProviderError
+            from src.core.tts.base import TTSProviderError
             raise TTSProviderError("Simulated speech synthesis service failure")
 
         start = time.perf_counter()

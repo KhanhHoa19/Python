@@ -7,8 +7,8 @@ from pathlib import Path
 
 from sqlalchemy import Engine
 
-from src.ingestion.service import IngestionService
-from src.storage.repositories import SqlBookmarkRepository, SqlBookRepository
+from src.core.ingestion.service import IngestionService
+from src.core.storage.repositories import SqlBookmarkRepository, SqlBookRepository
 
 
 def test_ingest_plain_text_file(test_engine: Engine):

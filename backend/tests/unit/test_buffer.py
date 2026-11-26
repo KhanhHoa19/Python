@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import tempfile
 
-from src.player.buffer_manager import LookaheadBuffer
-from src.player.cache_manager import AudioCacheManager
+from src.core.player.buffer_manager import LookaheadBuffer
+from src.core.player.cache_manager import AudioCacheManager
 from tests.conftest import MockTTSProvider
 
 

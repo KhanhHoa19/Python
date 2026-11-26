@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.ingestion.parser import split_into_chapters_and_sentences, tokenize_sentences
+from src.core.ingestion.parser import split_into_chapters_and_sentences, tokenize_sentences
 
 
 def test_standard_sentence_splitting():

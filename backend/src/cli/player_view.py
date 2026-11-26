@@ -13,12 +13,12 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
-from src.player.audio_player import AudioPlayer
-from src.player.buffer_manager import LookaheadBuffer
-from src.player.session_tracker import SessionTracker
-from src.storage.db import get_db_engine
-from src.storage.repositories import SqlBookmarkRepository, SqlBookRepository
-from src.tts.factory import TTSFactory
+from src.core.player.audio_player import AudioPlayer
+from src.core.player.buffer_manager import LookaheadBuffer
+from src.core.player.session_tracker import SessionTracker
+from src.core.storage.db import get_db_engine
+from src.core.storage.repositories import SqlBookmarkRepository, SqlBookRepository
+from src.core.tts.factory import TTSFactory
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -93,7 +93,7 @@ def run_player_tui(
         total_sentences=total_sentences,
         bookmark_repo=bookmark_repo,
     )
-    from src.telemetry.collector import TelemetryCollector
+    from src.core.telemetry.collector import TelemetryCollector
     collector = TelemetryCollector()
 
     # 5. Session metrics state

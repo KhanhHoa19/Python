@@ -6,9 +6,9 @@ import time
 
 from sqlalchemy import Engine
 
-from src.models.book import Book, BookSentence
-from src.player.session_tracker import SessionTracker
-from src.storage.repositories import (
+from src.core.models.book import Book, BookSentence
+from src.core.player.session_tracker import SessionTracker
+from src.core.storage.repositories import (
     SqlBookmarkRepository,
     SqlBookRepository,
     SqlSessionRepository,

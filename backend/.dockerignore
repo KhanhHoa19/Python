@@ -1,0 +1,12 @@
+.venv
+.git
+.gitignore
+.env
+.studylab
+frontend/node_modules
+frontend/dist
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache

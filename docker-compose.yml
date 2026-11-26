@@ -1,0 +1,72 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: studylab-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_DATABASE: ${DB_NAME:-studylab_audiobook}
+      MYSQL_USER: studylab
+      MYSQL_PASSWORD: ${DOCKER_DB_PASSWORD:-studylab_pass}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -ustudylab -p${DOCKER_DB_PASSWORD:-studylab_pass} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.backend
+    container_name: studylab-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_USE_SQLITE: "false"
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_USER: studylab
+      DB_PASSWORD: ${DOCKER_DB_PASSWORD:-studylab_pass}
+      DB_NAME: ${DB_NAME:-studylab_audiobook}
+      TTS_PROVIDER: ${TTS_PROVIDER:-edge-tts}
+      TTS_DEFAULT_VOICE: ${TTS_DEFAULT_VOICE:-en-US-ChristopherNeural}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LAN_PING_HOST: ${LAN_PING_HOST:-192.168.1.1}
+      TAILSCALE_PING_HOST: ${TAILSCALE_PING_HOST:-100.100.100.100}
+      AUDIO_CACHE_DIR: /app/.studylab/cache/audio
+    ports:
+      - "5000:5000"
+    volumes:
+      - audio_cache:/app/.studylab
+
+  frontend:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: studylab-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+  adminer:
+    image: adminer:latest
+    container_name: studylab-adminer
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8081:8080"
+
+volumes:
+  mysql_data:
+  audio_cache:

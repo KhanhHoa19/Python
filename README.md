@@ -13,7 +13,7 @@ Một backend dùng chung cho **web** (React) và **desktop** (CustomTkinter); h
 - **Trích dẫn yêu thích:** lưu cả câu bằng một chạm, gắn nhãn cảm xúc, nghe lại liên tục (playlist).
 - **Kho Giọng Đọc:** giọng hệ thống và giọng clone của riêng bạn (có đồng thuận, giới hạn số giọng/người), nghe thử, đặt mặc định.
 - **Quản Trị (chỉ admin):** sách hệ thống (thêm, sửa, xóa, công khai), thể loại, giọng công khai và giọng mặc định, thư viện âm thanh nền, danh sách người dùng.
-- **Thống kê** thói quen nghe và **xuất audio** (WAV/MP3).
+- **Thống kê** thói quen nghe (tính bằng **Pandas** `groupby`/`reindex` và **NumPy** cho trung bình, p95, tỷ lệ thành công; xem `backend/src/core/analytics/stats.py`) và **xuất audio** (WAV/MP3).
 
 ## Cấu trúc
 | Thư mục | Nội dung |
@@ -24,6 +24,7 @@ Một backend dùng chung cho **web** (React) và **desktop** (CustomTkinter); h
 | `docs/mockups/` | **Hợp đồng giao diện** S01–S12 cho cả hai client ([README](docs/mockups/README.md)) |
 | `docs/conventions/` | Quy ước code, giao diện ([design.md](docs/conventions/design.md)), bảo mật backend |
 | `docs/benchmarks/` | Đo bộ đệm tải trước của trình phát |
+| `db/schema.sql` | Lược đồ MySQL hiện tại (14 bảng, nạp lặp lại an toàn); migration trong `backend/src/core/storage/migrations.py` vẫn là nguồn chính |
 | `storage/` | Sao lưu và dữ liệu cục bộ (không commit) |
 
 ## Chạy
@@ -33,7 +34,7 @@ docker compose up --build -d    # MySQL + backend (5000) + web (5173) + adminer 
 ```
 Web: <http://localhost:5173>. Lần đầu backend tự tạo tài khoản `admin` (mật khẩu `ADMIN_PASSWORD`; nếu để trống sẽ sinh ngẫu nhiên và ghi vào log **một lần**) và 15 thể loại mặc định.
 Chưa có khóa TTS: đặt `TTS_PROVIDER=mock` (giọng im lặng, có clone giả).
-Chạy không Docker: `./start_dev.sh` (migration, backend, web). Desktop: `cd apps/desktop && python main.py`.
+Chạy không Docker: `./start_dev.sh` (migration, backend, web). Desktop: `cd apps/desktop && python main.py`, hoặc đóng gói thành file chạy (xem [apps/desktop/README.md](apps/desktop/README.md)).
 
 **Đăng nhập nhanh khi phát triển:** `DEV_QUICK_LOGIN=true` thêm 3 ô tài khoản mẫu ở màn đăng nhập (mật khẩu đặt trong `.env`: `DEMO_PASSWORD_*`). **Không bật trên máy chủ dùng chung.**
 

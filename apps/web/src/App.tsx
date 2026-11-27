@@ -1,33 +1,53 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { fetchCategories } from './api/booksApi.ts';
 import { listVoices } from './api/voicesApi.ts';
 import { getSettings } from './api/settingsApi.ts';
-import { Navbar } from './components/Navbar/Navbar.tsx';
+import { Sidebar } from './components/Sidebar/Sidebar.tsx';
 import { SettingsDialog } from './components/Dialogs/SettingsDialog.tsx';
-import { VoicesDialog } from './components/Dialogs/VoicesDialog.tsx';
 import { AppContext, AppContextValue, ReaderTarget, TabId } from './context/AppContext.tsx';
 import { useLibrary } from './hooks/useLibrary.ts';
+import { useTheme } from './hooks/useTheme.ts';
 import { mostRecentUnfinished } from './lib/books.ts';
+import { AdminPage } from './pages/AdminPage.tsx';
+import { ExplorePage } from './pages/ExplorePage.tsx';
+import { RecommendPage } from './pages/RecommendPage.tsx';
+import { QuotesPage } from './pages/QuotesPage.tsx';
 import { LibraryPage } from './pages/LibraryPage.tsx';
 import { ReaderPage } from './pages/ReaderPage.tsx';
 import { StatsPage } from './pages/StatsPage.tsx';
+import { VoicesPage } from './pages/VoicesPage.tsx';
+import { AuthUser } from './types/auth.ts';
+import { Category } from './types/book.ts';
 import { AppSettings } from './types/settings.ts';
 import { VoiceList } from './types/voice.ts';
 
-export function App() {
+interface AppProps {
+  user: AuthUser;
+  onLogout: () => void;
+}
+
+export function App({ user, onLogout }: AppProps) {
   const [tab, setTab] = useState<TabId>('library');
   const [readerTarget, setReaderTarget] = useState<ReaderTarget | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [voiceList, setVoiceList] = useState<VoiceList | null>(null);
   const [voiceId, setVoiceIdState] = useState<string | null>(null);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [quotesBook, setQuotesBook] = useState<number | null>(null);
+  const [category, setCategoryState] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [showVoices, setShowVoices] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toastText, setToastText] = useState('');
   const toastTimer = useRef<number>();
   const nonce = useRef(0);
+  const openQuotes = useCallback((bookId?: number) => {
+    setQuotesBook(bookId ?? null);
+    setTab('quotes');
+  }, []);
   const resumed = useRef(false);
 
   const library = useLibrary();
+  const theme = useTheme();
 
   const toast = useCallback((message: string) => {
     setToastText(message);
@@ -69,6 +89,7 @@ export function App() {
 
   useEffect(() => {
     void startup();
+    void fetchCategories().then(setCategories).catch(() => undefined); // the sidebar list is optional
   }, [startup]);
 
   // First successful library load: go to the reader if a book was left unfinished.
@@ -79,6 +100,14 @@ export function App() {
     if (book) openInReader(book.id, book.title);
   }, [library.loaded, library.books, openInReader]);
 
+  // A rename in the library must also update the title shown in the reader (without reloading it).
+  useEffect(() => {
+    setReaderTarget((current) => {
+      const book = current && library.books.find((b) => b.id === current.bookId);
+      return current && book && book.title !== current.title ? { ...current, title: book.title } : current;
+    });
+  }, [library.books]);
+
   // Library data is refreshed whenever its tab is opened.
   const selectTab = useCallback(
     (next: TabId) => {
@@ -87,6 +116,9 @@ export function App() {
     },
     [library],
   );
+
+  // The topic tag chosen on Khám phá or Kệ sách; both screens share it.
+  const setCategory = setCategoryState;
 
   const retry = useCallback(() => {
     void startup();
@@ -97,7 +129,13 @@ export function App() {
 
   const value = useMemo<AppContextValue>(
     () => ({
+      user,
+      logout: onLogout,
       settings,
+      categories,
+      category,
+      setCategory,
+      theme: theme.resolved,
       voiceList,
       voices: voiceList?.voices ?? [],
       voiceId,
@@ -109,17 +147,28 @@ export function App() {
       showError: setError,
       openInReader,
       goTo: selectTab,
+      openQuotes,
       openSettings: () => setShowSettings(true),
-      openVoices: () => setShowVoices(true),
+      openVoices: () => selectTab('voices'),
+      refreshCategories: setCategories,
     }),
-    [settings, voiceList, voiceId, refreshVoices, refreshSettings, toast, openInReader, selectTab],
+    [user, onLogout, settings, categories, category, setCategory, openQuotes, theme.resolved, voiceList, voiceId, refreshVoices, refreshSettings, toast, openInReader, selectTab],
   );
 
   return (
     <AppContext.Provider value={value}>
-      <div className="app-layout">
-        <Navbar current={tab} onSelect={selectTab} onSettings={() => setShowSettings(true)} />
+      <div className="app-shell">
+        <Sidebar
+          current={tab}
+          user={user}
+          onLogout={onLogout}
+          theme={theme.preference}
+          onSelect={selectTab}
+          onSettings={() => setShowSettings(true)}
+          onToggleTheme={theme.cycle}
+        />
 
+        <div className="content">
         {banner && (
           <div className="banner-error" role="alert">
             <span>{banner}</span>
@@ -132,14 +181,19 @@ export function App() {
 
         <main className="main-container">
           <section hidden={tab !== 'reader'} aria-label="Phòng Đọc"><ReaderPage target={readerTarget} visible={tab === 'reader'} /></section>
-          <section hidden={tab !== 'library'} aria-label="Thư Viện & Ghi Chú"><LibraryPage library={library} /></section>
+          <section hidden={tab !== 'explore'} aria-label="Khám Phá"><ExplorePage active={tab === 'explore'} library={library} /></section>
+          <section hidden={tab !== 'recommend'} aria-label="Gợi Ý"><RecommendPage active={tab === 'recommend'} library={library} /></section>
+          <section hidden={tab !== 'library'} aria-label="Kệ Sách Của Tôi"><LibraryPage library={library} active={tab === 'library'} /></section>
+          <section hidden={tab !== 'quotes'} aria-label="Trích Dẫn Yêu Thích"><QuotesPage active={tab === 'quotes'} library={library} bookId={quotesBook} onBookChange={setQuotesBook} /></section>
           <section hidden={tab !== 'stats'} aria-label="Thống Kê"><StatsPage active={tab === 'stats'} /></section>
+          <section hidden={tab !== 'voices'} aria-label="Kho Giọng Đọc"><VoicesPage active={tab === 'voices'} /></section>
+          {user.role === 'admin' && <section hidden={tab !== 'admin'} aria-label="Quản Trị"><AdminPage active={tab === 'admin'} /></section>}
         </main>
+        </div>
 
         <div className="toast" role="status" aria-live="polite">{toastText}</div>
 
         {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} />}
-        {showVoices && <VoicesDialog onClose={() => setShowVoices(false)} />}
       </div>
     </AppContext.Provider>
   );

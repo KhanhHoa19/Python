@@ -25,6 +25,7 @@
 
 ## Thành phần & luật
 - Mỗi dòng kiểm tra có 3 trạng thái: `⏳ đang chạy` · `✔ đạt` · `✖ lỗi + lý do`; chạy tuần tự DNS → cổng 443 → độ trễ → API Key → đọc thử.
+- **Chỉ admin thấy `Kiểm tra kết nối`** (nút và 4 dòng kết quả): các kiểm tra dùng tài khoản TTS dùng chung và `Thử đọc 1 câu` tốn một lượt tổng hợp, nên `GET /api/health/network` và `POST /api/tts/verify` trả `403` cho thành viên. Thành viên vẫn thấy nhà cung cấp và phần *Cài đặt đọc*.
 - **API Key không nhập qua giao diện**: đặt trong `.env` của backend (`OPENAI_API_KEY`…), không lưu vào CSDL và không bao giờ trả về client. Giao diện chỉ hiển thị nhà cung cấp đang dùng và kết quả `Kiểm tra kết nối`.
 - Khi gần chạm giới hạn ký tự/ngày (≥ 80%) thanh dùng đổi sang màu cam; đạt 100% thì S03 từ chối tạo audio mới (vẫn phát được câu đã cache) và báo `Đã đạt giới hạn ký tự hôm nay.`
 - Số câu tải trước, tốc độ mặc định, giọng mặc định áp dụng cho S03 ở lần mở sau.
@@ -39,4 +40,4 @@
 ## Tiêu chí hoàn thành
 - [ ] Năm dòng kiểm tra hiện đúng thứ tự và trạng thái.
 - [ ] API Key không xuất hiện ở giao diện, log hay phản hồi.
-- [ ] Giới hạn ký tự có hiệu lực thật ở backend.
+- [ ] Giới hạn ký tự có hiệu lực thật ở backend. Ô giới hạn dùng chung cho cả hệ thống: **chỉ admin sửa được** (Member thấy ô bị khóa, giá trị gửi lên bị backend bỏ qua). Giọng mặc định, tốc độ và số câu tải trước là của **riêng từng người**.

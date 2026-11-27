@@ -5,8 +5,9 @@ from __future__ import annotations
 import threading
 import time
 
-from api_client import ApiError
 from conftest import FakeOutput, wait_for
+
+from api_client import ApiError
 from player.engine import EngineCallbacks, PlaybackEngine
 
 
@@ -167,3 +168,49 @@ def test_pause_and_resume(output: FakeOutput) -> None:
     assert len(rec.ended) == 0  # nothing advances while paused
     engine.resume()
     assert rec.finished.wait(3)
+
+
+def test_parallel_fetch_keeps_sentence_order(output: FakeOutput) -> None:
+    def fetch(index: int) -> tuple[bytes, str]:
+        time.sleep(0.15 if index % 2 == 0 else 0.01)  # even sentences finish AFTER the odd ones
+        return f"audio-{index}".encode(), "wav"
+
+    rec = Recorder()
+    engine = PlaybackEngine(fetch, output, total=8, callbacks=rec.callbacks(), prefetch=4, fetch_workers=3)
+    engine.start(0)
+    assert rec.finished.wait(5)
+    assert rec.started == list(range(8))
+    assert output.played == [f"audio-{i}".encode() for i in range(8)]
+
+
+def test_parallel_fetch_stays_within_look_ahead_window(output: FakeOutput) -> None:
+    fetched: list[int] = []
+    output.duration = 5.0
+
+    def fetch(index: int) -> tuple[bytes, str]:
+        fetched.append(index)
+        return b"x", "wav"
+
+    engine = PlaybackEngine(fetch, output, total=50, callbacks=Recorder().callbacks(), prefetch=3, fetch_workers=4)
+    engine.start(0)
+    assert wait_for(lambda: len(output.played) == 1)
+    time.sleep(0.2)
+    assert len(fetched) <= 5  # playing sentence + prefetch 3 + the one being awaited
+    engine.stop()
+
+
+def test_parallel_fetch_skips_and_fatal_arrive_in_order(output: FakeOutput) -> None:
+    def fetch(index: int) -> tuple[bytes, str]:
+        if index == 1:
+            time.sleep(0.1)
+            raise ApiError(502, "boom")
+        if index == 3:
+            raise ApiError(429, "quota")
+        return b"x", "wav"
+
+    rec = Recorder()
+    engine = PlaybackEngine(fetch, output, total=6, callbacks=rec.callbacks(), prefetch=4, fetch_workers=3)
+    engine.start(0)
+    assert wait_for(lambda: rec.fatal)
+    assert rec.started == [0, 2] and [i for i, _ in rec.skipped] == [1]
+    assert not rec.finished.is_set()

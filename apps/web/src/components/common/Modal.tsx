@@ -15,7 +15,8 @@ export const Modal: React.FC<ModalProps> = ({ title, onClose, children, width = 
 
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
-    panelRef.current?.focus();
+    // Keep focus inside the dialog, but do not steal it from a field that already took it (autoFocus).
+    if (!panelRef.current?.contains(document.activeElement)) panelRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.stopPropagation();

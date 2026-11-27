@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import customtkinter as ctk
@@ -24,6 +24,31 @@ class AppContext:
     reader: ReaderController
     output: AudioOutput
     app: Any
+    user: dict[str, Any] = field(default_factory=dict)  # the signed-in account: id, username, full_name, role
+    covers: Any = None  # ui.images.CoverCache
+
+
+class LatestRequest:
+    """Numbers the requests of a screen so only the newest answer is shown.
+
+    Two refreshes in flight (typing in a search box, switching tabs quickly) finish in any order: without this an
+    older, slower answer would overwrite the newer one."""
+
+    def __init__(self) -> None:
+        self._latest = 0
+
+    def start(self) -> int:
+        self._latest += 1
+        return self._latest
+
+    def wrap(self, token: int, callback: Callable[..., Any]) -> Callable[..., None]:
+        """`callback`, but ignored unless `token` is still the newest request."""
+
+        def guarded(*args: Any) -> None:
+            if token == self._latest:
+                callback(*args)
+
+        return guarded
 
 
 def error_text(exc: Exception) -> str:

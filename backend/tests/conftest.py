@@ -80,6 +80,28 @@ class MockTTSProvider(TTSProvider):
         )
 
 
+@pytest.fixture(autouse=True)
+def _covers_in_tmp(tmp_path, monkeypatch):
+    """Generated covers go to the test's temp folder, never into the project."""
+    from src.core.config import get_settings
+
+    monkeypatch.setenv("COVER_DIR", str(tmp_path / "covers"))
+    monkeypatch.setenv("QUOTES_DIR", str(tmp_path / "quotes"))
+    monkeypatch.setenv("AMBIENT_DIR", str(tmp_path / "ambient"))
+    get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _dev_quick_login_off(monkeypatch):
+    """The developer's own .env may enable the one-click demo accounts; tests must not depend on that."""
+    from src.core.config import get_settings
+
+    monkeypatch.setenv("DEV_QUICK_LOGIN", "false")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.fixture
 def mock_tts_provider() -> MockTTSProvider:
     """Provide a fresh MockTTSProvider instance for testing."""
@@ -96,5 +118,8 @@ def test_engine() -> Generator[Engine, None, None]:
         echo=False,
     )
     run_migrations(engine)
+    from src.core.auth.users import SqlUserRepository
+
+    SqlUserRepository(engine).create_user("tester", "x", "Tester")  # the ordinary user most tests act as
     yield engine
     engine.dispose()

@@ -6,7 +6,7 @@ export async function fetchBookmark(bookId: number): Promise<Bookmark> {
 }
 
 export async function saveBookmark(
-  payload: { book_id: number; current_chapter: number; current_sentence_index: number; completion_percentage: number },
+  payload: { book_id: number; current_chapter: number; current_sentence_index: number; completion_percentage: number; voice?: string | null },
   keepalive = false,
 ): Promise<void> {
   await apiPost('/bookmarks', payload, { keepalive });
@@ -22,6 +22,12 @@ export async function fetchSentenceAudio(
   sentenceIndex: number,
   voice?: string | null,
   signal?: AbortSignal,
+  /** Multi-voice narration: the voice that reads the lines in quotation marks (the narrator is `voice`). */
+  dialogueVoice?: string | null,
 ): Promise<Blob> {
-  return apiGetBlob(`/audio/${bookId}/${sentenceIndex}`, { speed: 1.0, voice: voice ?? undefined }, signal);
+  return apiGetBlob(
+    `/audio/${bookId}/${sentenceIndex}`,
+    { speed: 1.0, voice: voice ?? undefined, dialogue_voice: dialogueVoice || undefined },
+    signal,
+  );
 }

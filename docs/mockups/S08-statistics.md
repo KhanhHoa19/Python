@@ -37,9 +37,9 @@ Số liệu do **backend tính** (Pandas/NumPy) và trả JSON; hai client chỉ
 - **loading / error** như README. Đổi khoảng thời gian thì tải lại, giữ nguyên bố cục.
 
 ## API
-`GET /api/analytics/summary?days=` · `GET /api/analytics/daily?days=` (đủ từng ngày, ngày không đọc = 0) · `GET /api/analytics/metrics?days=` (độ trễ TB/P95/lớn nhất, tỷ lệ thành công, từ/phút).
+`GET /api/analytics/summary?days=` · `GET /api/analytics/daily?days=` (đủ từng ngày, ngày không đọc = 0) · `GET /api/analytics/metrics?days=` (độ trễ TB/P95/lớn nhất, tỷ lệ thành công, từ/phút) · `GET /api/analytics/voices?days=` (phút/từ/phiên theo giọng, giọng nhiều nhất đứng đầu).
 
-> **Chưa làm:** biểu đồ tròn *Theo giọng* và `GET /api/analytics/voices`, vì `reading_sessions` chưa lưu giọng đã dùng. Cần thêm cột `voice_id` ở giai đoạn sau.
+Mỗi phiên đọc lưu giọng đã dùng (cột `reading_sessions.voice`); đổi giọng giữa chừng kết thúc phiên cũ và mở phiên mới. Phiên ghi trước khi có cột này hiện là `Không rõ`. Biểu đồ tròn tên **Thời gian nghe theo giọng**, ẩn khi chưa có phút nào.
 
 ## Ghi chú theo client
 - **Web:** Chart.js hoặc Recharts, vẽ từ JSON.

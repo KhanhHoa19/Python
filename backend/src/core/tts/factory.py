@@ -31,11 +31,21 @@ class TTSFactory:
             return MockTTSProvider()
 
         name = (provider_name or cfg.tts_provider).lower()
-        default_voice = voice or cfg.tts_default_voice
+        default_voice = voice or cfg.effective_default_voice
 
         if name == "mock":
             from src.core.tts.mock_adapter import MockProvider
-            return MockProvider(default_voice=voice or "mock-vi-female")
+            return MockProvider(
+                default_voice=voice or "mock-vi-female",
+                latency_seconds=cfg.mock_latency_seconds,
+                jitter_seconds=cfg.mock_jitter_seconds,
+                error_rate=cfg.mock_error_rate,
+                seed=cfg.mock_seed,
+            )
+
+        if name == "heygen":
+            from src.core.tts.heygen_adapter import HeyGenProvider
+            return HeyGenProvider(default_voice=voice or cfg.heygen_default_voice)
 
         if name in ("edge", "edge-tts", "edgetts"):
             from src.core.tts.edge_tts_adapter import EdgeTTSProvider

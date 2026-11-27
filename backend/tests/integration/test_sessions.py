@@ -13,15 +13,16 @@ from src.core.storage.repositories import (
     SqlBookRepository,
     SqlSessionRepository,
 )
+from tests.auth_helpers import TESTER_ID
 
 
 def test_session_tracking_and_bookmark_update(test_engine: Engine):
     book_repo = SqlBookRepository(test_engine)
-    bm_repo = SqlBookmarkRepository(test_engine)
-    sess_repo = SqlSessionRepository(test_engine)
+    bm_repo = SqlBookmarkRepository(test_engine, TESTER_ID)
+    sess_repo = SqlSessionRepository(test_engine, TESTER_ID)
 
     # 1. Create a book with 5 sentences
-    book = Book(
+    book = Book(owner_id=TESTER_ID,
         title="Test Book For Sessions",
         author="Author A",
         source_path="/fake/path.txt",
@@ -43,16 +44,14 @@ def test_session_tracking_and_bookmark_update(test_engine: Engine):
     ]
     book_id = book_repo.save_book(book, sentences)
 
-    # Initial bookmark should be sentence 0
-    initial_bm = bm_repo.get_bookmark(book_id)
-    assert initial_bm is not None
-    assert initial_bm.current_sentence_index == 0
-    assert initial_bm.completion_percentage == 0.0
+    # A user who never opened the book has no bookmark yet; reading starts at sentence 0
+    assert bm_repo.get_bookmark(book_id) is None
 
     # 2. Simulate reading session
     tracker = SessionTracker(
         book_id=book_id,
         total_sentences=5,
+        user_id=TESTER_ID,
         bookmark_repo=bm_repo,
         session_repo=sess_repo,
     )

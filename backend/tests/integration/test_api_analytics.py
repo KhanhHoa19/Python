@@ -3,22 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
 from src.api.app import create_app
+from tests.auth_helpers import sign_in, tester, use_engine
 
 
 @pytest.fixture
 def app_client(test_engine: Engine) -> Generator[TestClient, None, None]:
     """Create FastAPI test client with in-memory database engine."""
-    with patch("src.api.routes.analytics.get_db_engine", return_value=test_engine):
+    with use_engine(test_engine):
         app = create_app()
         with TestClient(app) as client:
-            yield client
+            yield sign_in(client, test_engine, tester(test_engine))
 
 
 def test_get_analytics_summary(app_client: TestClient) -> None:

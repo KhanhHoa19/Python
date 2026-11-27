@@ -6,7 +6,8 @@ import io
 import threading
 import uuid
 import wave
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from sqlalchemy import Engine
@@ -14,6 +15,7 @@ from sqlalchemy import Engine
 from src.core.config import get_settings
 from src.core.models.book import BookSentence
 from src.core.player.audio_service import QuotaExceededError, get_or_create_audio
+from src.core.player.dialogue_audio import get_or_create_dialogue_audio, quote_states_for
 from src.core.tts.base import TTSProviderError
 
 
@@ -22,19 +24,21 @@ class ExportJob:
     job_id: str
     book_id: int
     total: int
+    user_id: int | None = None  # who started it; only they can follow, cancel or download it
     done: int = 0
-    status: str = "running"  # running | done | failed
+    status: str = "running"  # running | done | failed | cancelled
     error: str | None = None
     file_path: Path | None = None
     file_name: str = ""
+    cancel_requested: threading.Event = field(default_factory=threading.Event)
 
 
 _JOBS: dict[str, ExportJob] = {}
 _JOBS_LOCK = threading.Lock()
 
 
-def create_job(book_id: int, total: int) -> ExportJob:
-    job = ExportJob(job_id=uuid.uuid4().hex, book_id=book_id, total=total)
+def create_job(book_id: int, total: int, user_id: int | None = None) -> ExportJob:
+    job = ExportJob(job_id=uuid.uuid4().hex, book_id=book_id, total=total, user_id=user_id)
     with _JOBS_LOCK:
         _JOBS[job.job_id] = job
     return job
@@ -43,6 +47,12 @@ def create_job(book_id: int, total: int) -> ExportJob:
 def get_job(job_id: str) -> ExportJob | None:
     with _JOBS_LOCK:
         return _JOBS.get(job_id)
+
+
+def cancel_job(job: ExportJob) -> None:
+    """Ask a running export to stop after the sentence in progress. No effect once finished."""
+    if job.status == "running":
+        job.cancel_requested.set()
 
 
 def _concat_wav(paths: list[Path]) -> bytes:
@@ -60,12 +70,12 @@ def _concat_wav(paths: list[Path]) -> bytes:
     return out.getvalue()
 
 
-def _audio_with_retry(engine: Engine, book_id: int, text: str, voice: str, speed: float) -> Path:
+def _audio_with_retry(make: Callable[[], Path]) -> Path:
     """One retry for transient provider errors (free TTS services drop requests now and then)."""
     try:
-        return get_or_create_audio(engine, book_id, text, voice, speed)[0]
+        return make()
     except TTSProviderError:
-        return get_or_create_audio(engine, book_id, text, voice, speed)[0]
+        return make()
 
 
 def run_export(
@@ -76,15 +86,29 @@ def run_export(
     speed: float,
     fmt: str | None,
     slug: str,
+    dialogue_voice: str | None = None,
 ) -> None:
     """Synthesize (or reuse cached) audio per sentence and write the merged file. Never raises."""
     try:
         paths: list[Path] = []
+        states = quote_states_for(engine, job.book_id) if dialogue_voice else {}
         for sentence in sentences:
-            path = _audio_with_retry(engine, job.book_id, sentence.text_content, voice, speed)
+            if job.cancel_requested.is_set():
+                job.status = "cancelled"
+                return
+            def make(s: BookSentence = sentence) -> Path:
+                if dialogue_voice:
+                    return get_or_create_dialogue_audio(
+                        engine, job.book_id, s.text_content, states.get(s.sentence_index, False), voice, dialogue_voice, speed)
+                return get_or_create_audio(engine, job.book_id, s.text_content, voice, speed)[0]
+
+            path = _audio_with_retry(make)
             paths.append(path)
             job.done += 1
 
+        if job.cancel_requested.is_set():
+            job.status = "cancelled"
+            return
         ext = paths[0].suffix.lstrip(".").lower() if paths else "wav"
         if fmt and fmt.lower() != ext:
             raise ValueError(f"Provider audio is '{ext}', cannot export as '{fmt.lower()}'.")

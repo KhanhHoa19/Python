@@ -6,7 +6,7 @@
 
 ## Directory Structure
 - `apps/web/src/pages/`: Top-level screens (`ReaderPage.tsx` S03, `LibraryPage.tsx` S01+S06, `StatsPage.tsx` S08).
-- `apps/web/src/components/`: Reusable UI grouped by feature (`Reader/`, `Library/`, `Stats/`, `Dialogs/` for S02/S04/S05/S06/S07, `Navbar/`, `common/`).
+- `apps/web/src/components/`: Reusable UI grouped by feature (`Reader/`, `Library/`, `Stats/`, `Dialogs/` for S02/S05/S06/S07 and the clone-voice dialog, `Admin/` for the S11 panels, `Sidebar/`, `common/`).
 - `apps/web/src/hooks/`: Stateful logic and side effects (`useAudioPlayer.ts`, `useLibrary.ts`, `useReaderShortcuts.ts`, `useTextSelection.ts`, `useAsyncData.ts`, `useBlobAudio.ts`).
 - `apps/web/src/lib/`: Pure functions with unit tests (`audioPrefetcher.ts`, `format.ts`, `books.ts`, `voices.ts`). No React, no DOM.
 - `apps/web/src/context/`: `AppContext` (settings, voices, navigation, toast/error banner).
@@ -22,6 +22,9 @@
 - **Separate UI from logic:** Audio playback, buffering, sentence karaoke highlighting, and keyboard shortcuts belong in `apps/web/src/hooks/` — keep `.tsx` components focused on rendering and user events.
 - **Cleanup side effects:** Always clean up `Audio` elements, timers, and `window` event listeners inside `useEffect` return callbacks to prevent memory leaks or overlapping audio playback.
 - **No heavy client-side filtering/aggregation:** Let backend endpoints compute analytics, sentence counts, and search/filter results.
+
+## Design system
+- Mọi UI mới theo [design.md](design.md): chỉ dùng token trong `index.css` (`var(--accent)`…), không mã màu thô; thêm màn mới vào `Sidebar.tsx`; mở đầu bằng `PageHeader`.
 
 ## Verification
 - Before finishing any frontend change, run `cd apps/web && npm run build` (`tsc && vite build`) and `npm test` (Vitest, pure logic in `src/lib/`), with zero errors.

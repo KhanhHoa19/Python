@@ -3,32 +3,36 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
 from src.api.app import create_app
-from src.core.models.book import Book
+from src.core.models.book import Book, BookSentence
 from src.core.storage.repositories import SqlBookRepository
+from tests.auth_helpers import TESTER_ID, sign_in, tester, use_engine
 
 
 @pytest.fixture
 def app_client(test_engine: Engine) -> Generator[TestClient, None, None]:
     """Create FastAPI test client with in-memory database engine."""
-    with patch("src.api.routes.player.get_db_engine", return_value=test_engine):
+    with use_engine(test_engine):
         app = create_app()
         with TestClient(app) as client:
-            yield client
+            yield sign_in(client, test_engine, tester(test_engine))
 
 
-def test_get_bookmark_defaults_for_new_book(app_client: TestClient) -> None:
-    """Test fetching bookmark for book without history returns default 0 index."""
-    resp = app_client.get("/api/bookmarks/999")
+def test_get_bookmark_defaults_for_new_book(app_client: TestClient, test_engine: Engine) -> None:
+    """A book the user never opened starts at sentence 0; a book that does not exist is a 404."""
+    assert app_client.get("/api/bookmarks/999").status_code == 404
+    book_id = SqlBookRepository(test_engine).save_book(
+        Book(owner_id=TESTER_ID, title="New", author="A", source_path="n.txt", content_hash="d" * 64,
+             total_chapters=1, total_sentences=1, total_words=1), [])
+    resp = app_client.get(f"/api/bookmarks/{book_id}")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["book_id"] == 999
+    assert data["book_id"] == book_id
     assert data["current_sentence_index"] == 0
     assert data["completion_percentage"] == 0.0
 
@@ -36,7 +40,7 @@ def test_get_bookmark_defaults_for_new_book(app_client: TestClient) -> None:
 def test_update_and_get_bookmark(app_client: TestClient, test_engine: Engine) -> None:
     """Test updating bookmark position and verifying retrieval."""
     book_repo = SqlBookRepository(test_engine)
-    book = Book(
+    book = Book(owner_id=TESTER_ID,
         id=None,
         title="Bookmark Test Book",
         author="Author",
@@ -69,9 +73,15 @@ def test_update_and_get_bookmark(app_client: TestClient, test_engine: Engine) ->
 
 
 def test_record_reading_session(app_client: TestClient, test_engine: Engine) -> None:
-    """Test posting a reading session row."""
+    """Test posting a reading session row (the book must exist: MySQL enforces the foreign key)."""
+    book_id = SqlBookRepository(test_engine).save_book(
+        Book(owner_id=TESTER_ID, id=None, title="Session Book", author="A", source_path="s.txt", content_hash="e" * 64,
+             total_chapters=1, total_sentences=1, total_words=3),
+        [BookSentence(id=None, book_id=0, chapter_index=1, sentence_index=0, text_content="Một câu.",
+                      word_count=2, content_hash="f" * 64)],
+    )
     payload = {
-        "book_id": 1,
+        "book_id": book_id,
         "duration_seconds": 120,
         "sentences_read": 8,
         "words_read": 110,
@@ -81,7 +91,7 @@ def test_record_reading_session(app_client: TestClient, test_engine: Engine) -> 
     resp = app_client.post("/api/sessions", json=payload)
     assert resp.status_code == 201
     body = resp.json()
-    assert body["book_id"] == 1
+    assert body["book_id"] == book_id
     assert body["duration_seconds"] == 120
     assert body["sentences_read"] == 8
     assert body["words_read"] == 110

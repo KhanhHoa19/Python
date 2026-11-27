@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiGetBlob, apiUpload } from './client.ts';
+import { apiDelete, apiGet, apiGetBlob, apiPatch, apiUpload } from './client.ts';
 import { Voice, VoiceList } from '../types/voice.ts';
 
 export async function listVoices(): Promise<VoiceList> {
@@ -27,4 +27,8 @@ export async function deleteVoice(voiceId: string): Promise<void> {
 
 export async function fetchVoicePreview(voiceId: string): Promise<Blob> {
   return apiGetBlob(`/voices/${encodeURIComponent(voiceId)}/preview`);
+}
+
+export async function renameVoice(voiceId: string, displayName: string): Promise<Voice> {
+  return apiPatch<Voice>(`/voices/${encodeURIComponent(voiceId)}`, { display_name: displayName });
 }

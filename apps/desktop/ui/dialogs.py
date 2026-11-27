@@ -1,22 +1,34 @@
-"""Modal dialogs: S02 upload, S04 voices (+clone), S05 connection & settings, S06 note, S07 export."""
+"""Modal dialogs: S02 upload, S04 clone/rename voice, S11 category, S05 connection & settings, S06 note, S07 export."""
 
 from __future__ import annotations
 
 import tkinter as tk
 from collections.abc import Callable
 from pathlib import Path
-from tkinter import filedialog, messagebox
-from typing import Any
+from tkinter import filedialog
+from typing import Any, ClassVar
 
 import customtkinter as ctk
 
 import config
+from player.chapters import describe_chapter
+from player.sleep_timer import CUSTOM_MINUTES_MAX, MINUTE_PRESETS, parse_custom_minutes
+from ui import theme
 from ui.common import AppContext, ModalDialog, error_text
-from ui.viewmodels import describe_voice, format_number, usage_ratio
+from ui.images import CoverView
+from ui.viewmodels import (
+    CATEGORY_ICONS,
+    EMOTIONS,
+    category_problem,
+    check_book_title,
+    describe_voice,
+    format_number,
+    usage_ratio,
+)
 
-_ERROR_COLOR = "#d64545"
-_OK_COLOR = "#2e9d57"
-_WARN_COLOR = "#e08a1e"
+_ERROR_COLOR = theme.DANGER
+_OK_COLOR = theme.SUCCESS
+_WARN_COLOR = theme.WARNING
 
 
 def _label(master: tk.Misc, text: str, **kwargs: Any) -> ctk.CTkLabel:
@@ -27,10 +39,12 @@ def _label(master: tk.Misc, text: str, **kwargs: Any) -> ctk.CTkLabel:
 
 
 class UploadDialog(ModalDialog):
-    def __init__(self, master: tk.Misc, ctx: AppContext, on_done: Callable[[dict[str, Any]], None]):
-        super().__init__(master, "Thêm tài liệu", 520, 360)
+    def __init__(self, master: tk.Misc, ctx: AppContext, on_done: Callable[[dict[str, Any]], None],
+                 default_public: bool = False):
+        super().__init__(master, "Thêm tài liệu", 520, 560)
         self.ctx, self.on_done = ctx, on_done
         self.path: Path | None = None
+        self.cover: Path | None = None
         self.columnconfigure(0, weight=1)
 
         _label(self, "Hỗ trợ: PDF (có lớp chữ), DOCX, TXT, MD · Tối đa 10 MB").grid(
@@ -49,12 +63,28 @@ class UploadDialog(ModalDialog):
         self.author_entry = ctk.CTkEntry(self)
         self.author_entry.grid(row=5, column=0, padx=20, sticky="ew")
 
+        _label(self, "Thể loại").grid(row=6, column=0, padx=20, pady=(10, 0), sticky="w")
+        self.categories = ctx.app.categories
+        self.category_box = ctk.CTkComboBox(self, values=["Khác (mặc định)"] + [c["name"] for c in self.categories], state="readonly")
+        self.category_box.set("Khác (mặc định)")
+        self.category_box.grid(row=7, column=0, padx=20, sticky="ew")
+        cover_row = ctk.CTkFrame(self, fg_color="transparent")
+        cover_row.grid(row=8, column=0, padx=20, pady=(10, 0), sticky="ew")
+        cover_row.columnconfigure(0, weight=1)
+        self.cover_label = _label(cover_row, "Ảnh bìa: tự tạo (PDF dùng trang đầu)", text_color=theme.MUTED)
+        self.cover_label.grid(row=0, column=0, sticky="ew")
+        ctk.CTkButton(cover_row, text="Chọn ảnh…", width=110, command=self._choose_cover, **theme.SECONDARY).grid(row=0, column=1)
+        self.public_var = tk.BooleanVar(value=default_public and ctx.user.get("role") == "admin")
+        if ctx.user.get("role") == "admin":
+            ctk.CTkCheckBox(self, text="Công khai cho mọi người (sách hệ thống, hiện trong Khám phá)",
+                            variable=self.public_var).grid(row=9, column=0, padx=20, pady=(12, 0), sticky="w")
+
         self.status = _label(self, "", text_color=_ERROR_COLOR, wraplength=470)
-        self.status.grid(row=6, column=0, padx=20, pady=(10, 0), sticky="w")
+        self.status.grid(row=10, column=0, padx=20, pady=(10, 0), sticky="w")
         self.progress = ctk.CTkProgressBar(self, mode="indeterminate")
         buttons = ctk.CTkFrame(self, fg_color="transparent")
-        buttons.grid(row=8, column=0, padx=20, pady=16, sticky="e")
-        self.cancel_btn = ctk.CTkButton(buttons, text="Hủy", width=90, fg_color="gray40", command=self.close)
+        buttons.grid(row=12, column=0, padx=20, pady=16, sticky="e")
+        self.cancel_btn = ctk.CTkButton(buttons, text="Hủy", width=90, **theme.SECONDARY, command=self.close)
         self.cancel_btn.pack(side="left", padx=(0, 8))
         self.upload_btn = ctk.CTkButton(buttons, text="Tải lên", width=110, state="disabled", command=self._upload)
         self.upload_btn.pack(side="left")
@@ -73,6 +103,22 @@ class UploadDialog(ModalDialog):
         self.upload_btn.configure(state="normal")
         self.status.configure(text="")
 
+    def _choose_cover(self) -> None:
+        chosen = filedialog.askopenfilename(parent=self, title="Chọn ảnh bìa",
+                                            filetypes=[("Ảnh JPEG/PNG", "*.jpg *.jpeg *.png"), ("Tất cả", "*.*")])
+        if not chosen:
+            return
+        picked = Path(chosen)
+        if picked.stat().st_size > 2 * 1024 * 1024:
+            self.status.configure(text="Ảnh bìa tối đa 2 MB.", text_color=_ERROR_COLOR)
+            return
+        self.cover = picked
+        self.cover_label.configure(text=f"Ảnh bìa: {picked.name}", text_color=theme.TEXT)
+
+    def _category_id(self) -> int | None:
+        """The chosen category's id, or None for the default ("Khác")."""
+        return next((c["id"] for c in self.categories if c["name"] == self.category_box.get()), None)
+
     def _upload(self) -> None:
         if not self.path:
             return
@@ -80,12 +126,13 @@ class UploadDialog(ModalDialog):
             self.status.configure(text="File vượt quá 10 MB.")
             return
         self.upload_btn.configure(state="disabled")
-        self.status.configure(text="Đang tải lên và tách câu…", text_color=("gray20", "gray80"))
-        self.progress.grid(row=7, column=0, padx=20, sticky="ew")
+        self.status.configure(text="Đang tải lên và tách câu…", text_color=theme.TEXT_2)
+        self.progress.grid(row=11, column=0, padx=20, sticky="ew")
         self.progress.start()
         path, title, author = self.path, self.title_entry.get().strip(), self.author_entry.get().strip()
+        category_id, cover, is_public = self._category_id(), self.cover, bool(self.public_var.get())
         self.ctx.ui.run_in_thread(
-            lambda: self.ctx.api.ingest_book(path, title, author),
+            lambda: self.ctx.api.ingest_book(path, title, author, category_id, cover, is_public),
             self.guard(self._done), self.guard(self._failed),
         )
 
@@ -103,113 +150,92 @@ class UploadDialog(ModalDialog):
         self.upload_btn.configure(state="normal")
 
 
-# ============================================================ S04 – Giọng đọc
+# ============================================================ S04 – Thêm giọng (Kho Giọng Đọc) · S11 – Quản trị
 
 
-class VoicesDialog(ModalDialog):
-    """Pick a voice (with preview) and manage custom voices."""
+class RenameVoiceDialog(ModalDialog):
+    """Change the name of a cloned voice."""
 
-    def __init__(self, master: tk.Misc, ctx: AppContext, on_select: Callable[[str], None]):
-        super().__init__(master, "Giọng đọc", 640, 520)
-        self.ctx, self.on_select = ctx, on_select
-        self.data: dict[str, Any] = {}
-        self.choice = tk.StringVar(value=ctx.app.current_voice_id or "")
+    def __init__(self, master: tk.Misc, ctx: AppContext, voice: dict[str, Any], on_done: Callable[[], None],
+                 rename: Callable[[str], Any] | None = None, title: str = "Đổi tên giọng"):
+        super().__init__(master, title, 440, 220)
+        self.ctx, self.voice, self.on_done = ctx, voice, on_done
+        self._rename = rename or (lambda name: ctx.api.rename_voice(voice["voice_id"], name))
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(1, weight=1)
+        _label(self, "Tên giọng").grid(row=0, column=0, padx=20, pady=(20, 0), sticky="w")
+        self.name_entry = ctk.CTkEntry(self)
+        self.name_entry.insert(0, voice["display_name"])
+        self.name_entry.grid(row=1, column=0, padx=20, sticky="ew")
+        self.status = _label(self, "", text_color=_ERROR_COLOR, wraplength=400)
+        self.status.grid(row=2, column=0, padx=20, pady=(8, 0), sticky="w")
+        buttons = ctk.CTkFrame(self, fg_color="transparent")
+        buttons.grid(row=3, column=0, padx=20, pady=16, sticky="e")
+        ctk.CTkButton(buttons, text="Hủy", width=90, **theme.SECONDARY, command=self.close).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(buttons, text="Lưu", width=90, command=self._save).pack(side="left")
 
-        self.notice = _label(self, "Đang tải danh sách giọng…", text_color=_WARN_COLOR, wraplength=600)
-        self.notice.grid(row=0, column=0, padx=16, pady=(12, 0), sticky="ew")
-        self.tabs = ctk.CTkTabview(self)
-        self.tabs.grid(row=1, column=0, padx=16, pady=8, sticky="nsew")
-        self.builtin_list = self._make_list(self.tabs.add("Có sẵn"))
-        self.custom_list = self._make_list(self.tabs.add("Giọng của tôi"))
-
-        bar = ctk.CTkFrame(self, fg_color="transparent")
-        bar.grid(row=2, column=0, padx=16, pady=(0, 16), sticky="ew")
-        self.add_btn = ctk.CTkButton(bar, text="+ Thêm giọng mới", command=self._open_clone, state="disabled")
-        self.add_btn.pack(side="left")
-        ctk.CTkButton(bar, text="Dùng giọng này", width=130, command=self._use).pack(side="right")
-        ctk.CTkButton(bar, text="Hủy", width=80, fg_color="gray40", command=self.close).pack(side="right", padx=8)
-        self.reload()
-
-    @staticmethod
-    def _make_list(tab: ctk.CTkFrame) -> ctk.CTkScrollableFrame:
-        frame = ctk.CTkScrollableFrame(tab)
-        frame.pack(fill="both", expand=True)
-        frame.columnconfigure(0, weight=1)
-        return frame
-
-    def reload(self) -> None:
-        self.ctx.ui.run_in_thread(self.ctx.api.list_voices, self.guard(self._loaded), self.guard(self._load_failed))
-
-    def _load_failed(self, exc: Exception) -> None:
-        self.notice.configure(text=error_text(exc), text_color=_ERROR_COLOR)
-
-    def _loaded(self, data: dict[str, Any]) -> None:
-        self.data = data
-        self.ctx.app.set_voices(data)
-        self.notice.configure(text=data.get("warning") or "", text_color=_WARN_COLOR)
-        if data["supports_cloning"]:
-            self.add_btn.configure(state="normal")
-        else:
-            self.add_btn.configure(state="disabled")
-            self.notice.configure(text=(data.get("warning") or "") + " Nhà cung cấp hiện tại không hỗ trợ tạo giọng.")
-        for frame, custom in ((self.builtin_list, False), (self.custom_list, True)):
-            for child in frame.winfo_children():
-                child.destroy()
-            voices = [v for v in data["voices"] if bool(v["is_custom"]) is custom]
-            if not voices:
-                _label(frame, "Bạn chưa có giọng riêng nào." if custom else "Chưa có giọng nào.").grid(
-                    row=0, column=0, pady=20)
-            for row, voice in enumerate(voices):
-                self._voice_row(frame, row, voice)
-
-    def _voice_row(self, frame: ctk.CTkScrollableFrame, row: int, voice: dict[str, Any]) -> None:
-        line = ctk.CTkFrame(frame, fg_color="transparent")
-        line.grid(row=row, column=0, sticky="ew", pady=2)
-        line.columnconfigure(0, weight=1)
-        ctk.CTkRadioButton(line, text=describe_voice(voice), variable=self.choice, value=voice["voice_id"]).grid(
-            row=0, column=0, sticky="w")
-        ctk.CTkButton(line, text="▶ Nghe thử", width=96, command=lambda v=voice["voice_id"]: self._preview(v)).grid(
-            row=0, column=1, padx=4)
-        if voice["is_custom"]:
-            ctk.CTkButton(line, text="🗑", width=36, fg_color=_ERROR_COLOR,
-                          command=lambda v=voice: self._delete(v)).grid(row=0, column=2)
-
-    def _preview(self, voice_id: str) -> None:
-        self.notice.configure(text="Đang tải giọng nghe thử…", text_color=_WARN_COLOR)
-
-        def work() -> None:
-            data, ext = self.ctx.api.preview_voice(voice_id)
-            self.ctx.output.play(data, ext)
-
-        self.ctx.ui.run_in_thread(
-            work, self.guard(lambda _: self.notice.configure(text="")), self.guard(self._load_failed))
-
-    def _delete(self, voice: dict[str, Any]) -> None:
-        if not messagebox.askyesno("Xóa giọng", f'Xóa giọng "{voice["display_name"]}"?', parent=self):
+    def _save(self) -> None:
+        name = self.name_entry.get().strip()
+        if not name:
+            self.status.configure(text="Hãy nhập tên giọng.")
             return
         self.ctx.ui.run_in_thread(
-            lambda: self.ctx.api.delete_voice(voice["voice_id"]),
-            self.guard(lambda _: self.reload()), self.guard(self._load_failed))
+            lambda: self._rename(name),
+            self.guard(self._done), self.guard(lambda exc: self.status.configure(text=error_text(exc))))
 
-    def _use(self) -> None:
-        if self.choice.get():
-            self.on_select(self.choice.get())
+    def _done(self, _result: dict[str, Any]) -> None:
+        self.on_done()
         self.close()
 
-    def _open_clone(self) -> None:
-        CloneVoiceDialog(self, self.ctx, on_created=self._cloned)
 
-    def _cloned(self, voice: dict[str, Any]) -> None:
-        self.choice.set(voice["voice_id"])
-        self.tabs.set("Giọng của tôi")
-        self.reload()
-        self.ctx.app.toast(f'Đã tạo giọng "{voice["display_name"]}"')
+class CategoryDialog(ModalDialog):
+    """Admin: add or edit a category (name, icon, colour)."""
+
+    def __init__(self, master: tk.Misc, ctx: AppContext, category: dict[str, Any] | None, on_done: Callable[[], None]):
+        super().__init__(master, "Sửa thể loại" if category else "Thêm thể loại", 460, 330)
+        self.ctx, self.category, self.on_done = ctx, category, on_done
+        self.columnconfigure(0, weight=1)
+        _label(self, "Tên thể loại").grid(row=0, column=0, padx=20, pady=(20, 0), sticky="w")
+        self.name_entry = ctk.CTkEntry(self)
+        self.name_entry.insert(0, category["name"] if category else "")
+        self.name_entry.grid(row=1, column=0, padx=20, sticky="ew")
+        opts = ctk.CTkFrame(self, fg_color="transparent")
+        opts.grid(row=2, column=0, padx=20, pady=12, sticky="w")
+        _label(opts, "Biểu tượng").grid(row=0, column=0, padx=(0, 6))
+        self.icon_labels = {value: label for value, label in CATEGORY_ICONS}
+        self.icon = ctk.CTkComboBox(opts, values=list(self.icon_labels.values()), width=130, state="readonly")
+        self.icon.set(self.icon_labels.get(category["icon"] if category else "book-open", "Sách mở"))
+        self.icon.grid(row=0, column=1, padx=(0, 20))
+        _label(opts, "Màu (#rrggbb)").grid(row=0, column=2, padx=(0, 6))
+        self.color = ctk.CTkEntry(opts, width=90)
+        self.color.insert(0, category["color"] if category else "#8a6d3b")
+        self.color.grid(row=0, column=3)
+        self.status = _label(self, "", text_color=_ERROR_COLOR, wraplength=420)
+        self.status.grid(row=3, column=0, padx=20, sticky="w")
+        buttons = ctk.CTkFrame(self, fg_color="transparent")
+        buttons.grid(row=4, column=0, padx=20, pady=16, sticky="e")
+        ctk.CTkButton(buttons, text="Hủy", width=90, **theme.SECONDARY, command=self.close).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(buttons, text="Lưu", width=90, command=self._save).pack(side="left")
+
+    def _save(self) -> None:
+        name, color = self.name_entry.get().strip(), self.color.get().strip()
+        problem = category_problem(name, color)
+        if problem:
+            self.status.configure(text=problem)
+            return
+        icon = next((v for v, label in self.icon_labels.items() if label == self.icon.get()), "book-open")
+        api, category = self.ctx.api, self.category
+        work = (lambda: api.update_category(category["id"], name, icon, color)) if category else (
+            lambda: api.create_category(name, icon, color))
+        self.ctx.ui.run_in_thread(work, self.guard(self._done), self.guard(lambda exc: self.status.configure(text=error_text(exc))))
+
+    def _done(self, _result: dict[str, Any]) -> None:
+        self.on_done()
+        self.close()
 
 
 class CloneVoiceDialog(ModalDialog):
-    def __init__(self, master: tk.Misc, ctx: AppContext, on_created: Callable[[dict[str, Any]], None]):
+    def __init__(self, master: tk.Misc, ctx: AppContext, on_created: Callable[[dict[str, Any]], None],
+                 sample_seconds: tuple[float, float] = (5, 15)):
         super().__init__(master, "Thêm giọng mới", 520, 420)
         self.ctx, self.on_created = ctx, on_created
         self.sample: Path | None = None
@@ -219,7 +245,7 @@ class CloneVoiceDialog(ModalDialog):
         _label(self, "Tên giọng").grid(row=0, column=0, padx=20, pady=(20, 0), sticky="w")
         self.name_entry = ctk.CTkEntry(self)
         self.name_entry.grid(row=1, column=0, padx=20, sticky="ew")
-        _label(self, "File mẫu (5–15 giây, WAV/MP3)").grid(row=2, column=0, padx=20, pady=(12, 0), sticky="w")
+        _label(self, f"File mẫu ({sample_seconds[0]:g}–{sample_seconds[1]:g} giây, WAV/MP3)").grid(row=2, column=0, padx=20, pady=(12, 0), sticky="w")
         row = ctk.CTkFrame(self, fg_color="transparent")
         row.grid(row=3, column=0, padx=20, sticky="ew")
         row.columnconfigure(0, weight=1)
@@ -246,7 +272,7 @@ class CloneVoiceDialog(ModalDialog):
         self.status.grid(row=6, column=0, padx=20, pady=(10, 0), sticky="w")
         buttons = ctk.CTkFrame(self, fg_color="transparent")
         buttons.grid(row=7, column=0, padx=20, pady=16, sticky="e")
-        ctk.CTkButton(buttons, text="Hủy", width=90, fg_color="gray40", command=self.close).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(buttons, text="Hủy", width=90, **theme.SECONDARY, command=self.close).pack(side="left", padx=(0, 8))
         self.create_btn = ctk.CTkButton(buttons, text="Tạo giọng", width=110, state="disabled", command=self._create)
         self.create_btn.pack(side="left")
 
@@ -289,7 +315,7 @@ class CloneVoiceDialog(ModalDialog):
 
 class SettingsDialog(ModalDialog):
     CHECKS = ("dns", "port", "latency", "synth")
-    CHECK_LABELS = {"dns": "DNS", "port": "Cổng 443", "latency": "Độ trễ mạng", "synth": "Thử đọc 1 câu"}
+    CHECK_LABELS: ClassVar[dict[str, str]] = {"dns": "DNS", "port": "Cổng 443", "latency": "Độ trễ mạng", "synth": "Thử đọc 1 câu"}
 
     def __init__(self, master: tk.Misc, ctx: AppContext):
         super().__init__(master, "Kết nối & Cài đặt", 560, 640)
@@ -300,11 +326,14 @@ class SettingsDialog(ModalDialog):
         self.provider = _label(self, "Nhà cung cấp: …")
         self.provider.grid(row=1, column=0, padx=20, sticky="w")
         _label(self, "API Key đặt trong file .env phía backend, không nhập ở đây.",
-               text_color=("gray40", "gray60")).grid(row=2, column=0, padx=20, sticky="w")
+               text_color=theme.MUTED).grid(row=2, column=0, padx=20, sticky="w")
         self.check_btn = ctk.CTkButton(self, text="Kiểm tra kết nối", command=self._run_checks)
         self.check_btn.grid(row=3, column=0, padx=20, pady=8, sticky="w")
         grid = ctk.CTkFrame(self, fg_color="transparent")
         grid.grid(row=4, column=0, padx=20, sticky="ew")
+        if ctx.user.get("role") != "admin":  # the checks use the shared TTS account: administrators only
+            self.check_btn.grid_remove()
+            grid.grid_remove()
         grid.columnconfigure(1, weight=1)
         self.rows: dict[str, tuple[ctk.CTkLabel, ctk.CTkLabel]] = {}
         for i, key in enumerate(self.CHECKS):
@@ -330,7 +359,9 @@ class SettingsDialog(ModalDialog):
         _label(form, "Giới hạn ký tự/ngày").grid(row=3, column=0, pady=4, sticky="w")
         self.limit = ctk.CTkEntry(form, width=120)
         self.limit.grid(row=3, column=1, sticky="w", padx=10)
-        _label(form, "(0 = không giới hạn)", text_color=("gray40", "gray60")).grid(row=3, column=1, sticky="e")
+        self.limit_locked = ctx.user.get("role") != "admin"  # the limit is shared by everyone: admins only
+        _label(form, "(chỉ quản trị viên thay đổi)" if self.limit_locked else "(0 = không giới hạn)",
+               text_color=theme.MUTED).grid(row=3, column=1, sticky="e")
 
         self.usage_label = _label(self, "")
         self.usage_label.grid(row=7, column=0, padx=20, pady=(10, 0), sticky="w")
@@ -342,7 +373,7 @@ class SettingsDialog(ModalDialog):
         self.status.grid(row=9, column=0, padx=20, pady=(8, 0), sticky="w")
         buttons = ctk.CTkFrame(self, fg_color="transparent")
         buttons.grid(row=10, column=0, padx=20, pady=16, sticky="e")
-        ctk.CTkButton(buttons, text="Đóng", width=90, fg_color="gray40", command=self.close).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(buttons, text="Đóng", width=90, **theme.SECONDARY, command=self.close).pack(side="left", padx=(0, 8))
         ctk.CTkButton(buttons, text="Lưu cài đặt", width=120, command=self._save).pack(side="left")
         self._voice_ids: dict[str, str] = {}
         self._load()
@@ -366,14 +397,17 @@ class SettingsDialog(ModalDialog):
         current = next((n for n, vid in self._voice_ids.items() if vid == settings["default_voice"]), None)
         self.voice.configure(values=names)
         self.voice.set(current or settings["default_voice"])
+        self.limit.configure(state="normal")
         self.limit.delete(0, "end")
         self.limit.insert(0, str(settings["daily_char_limit"]))
+        if self.limit_locked:
+            self.limit.configure(state="disabled")
         self._show_usage(settings)
 
     def _show_usage(self, settings: dict[str, Any]) -> None:
         used, limit = settings["chars_used_today"], settings["daily_char_limit"]
         self.usage_bar.set(usage_ratio(used, limit))
-        color = _WARN_COLOR if limit and used / limit >= 0.8 else ("#3b8ed0", "#1f6aa5")
+        color = _WARN_COLOR if limit and used / limit >= 0.8 else theme.ACCENT
         self.usage_bar.configure(progress_color=color)
         self.usage_label.configure(text=f"Đã dùng hôm nay: {format_number(used)} ký tự")
 
@@ -402,7 +436,7 @@ class SettingsDialog(ModalDialog):
     def _set_row(self, key: str, state: str, text: str) -> None:
         icon, detail = self.rows[key]
         symbol, color = {"run": ("⏳", _WARN_COLOR), "ok": ("✔", _OK_COLOR), "fail": ("✖", _ERROR_COLOR)}.get(
-            state, ("·", "gray50"))
+            state, ("·", theme.MUTED))
         icon.configure(text=symbol, text_color=color)
         detail.configure(text=f"{self.CHECK_LABELS[key]}  {text}")
 
@@ -444,23 +478,26 @@ class SettingsDialog(ModalDialog):
 class NoteDialog(ModalDialog):
     def __init__(self, master: tk.Misc, ctx: AppContext, book_id: int, sentence_index: int,
                  start: int, end: int, excerpt: str, on_saved: Callable[[], None]):
-        super().__init__(master, "Ghi chú mới", 520, 330)
+        super().__init__(master, "Lưu trích dẫn", 520, 390)
         self.ctx, self.on_saved = ctx, on_saved
         self.target = (book_id, sentence_index, start, end)
         self.columnconfigure(0, weight=1)
-        _label(self, "Đoạn đã chọn").grid(row=0, column=0, padx=20, pady=(18, 0), sticky="w")
+        _label(self, "Đoạn trích").grid(row=0, column=0, padx=20, pady=(18, 0), sticky="w")
         shown = excerpt if len(excerpt) <= 160 else excerpt[:157] + "…"
-        _label(self, f"“{shown}”", wraplength=470, text_color=("gray30", "gray70")).grid(
+        _label(self, f"“{shown}”", wraplength=470, text_color=theme.TEXT_2).grid(
             row=1, column=0, padx=20, sticky="w")
         _label(self, "Ghi chú của bạn").grid(row=2, column=0, padx=20, pady=(12, 0), sticky="w")
         self.box = ctk.CTkTextbox(self, height=90)
         self.box.grid(row=3, column=0, padx=20, sticky="ew")
+        _label(self, "Cảm xúc (không bắt buộc)").grid(row=4, column=0, padx=20, pady=(10, 0), sticky="w")
+        self.feeling = ctk.CTkSegmentedButton(self, values=[label for _, label in EMOTIONS])
+        self.feeling.grid(row=5, column=0, padx=20, sticky="w")
         self.status = _label(self, "", text_color=_ERROR_COLOR, wraplength=470)
-        self.status.grid(row=4, column=0, padx=20, pady=(6, 0), sticky="w")
+        self.status.grid(row=6, column=0, padx=20, pady=(6, 0), sticky="w")
         buttons = ctk.CTkFrame(self, fg_color="transparent")
-        buttons.grid(row=5, column=0, padx=20, pady=12, sticky="e")
-        ctk.CTkButton(buttons, text="Hủy", width=90, fg_color="gray40", command=self.close).pack(side="left", padx=(0, 8))
-        self.save_btn = ctk.CTkButton(buttons, text="Lưu ghi chú", width=120, command=self._save)
+        buttons.grid(row=7, column=0, padx=20, pady=12, sticky="e")
+        ctk.CTkButton(buttons, text="Hủy", width=90, **theme.SECONDARY, command=self.close).pack(side="left", padx=(0, 8))
+        self.save_btn = ctk.CTkButton(buttons, text="Lưu", width=120, command=self._save)
         self.save_btn.pack(side="left")
         self.box.focus_set()
 
@@ -468,8 +505,9 @@ class NoteDialog(ModalDialog):
         self.save_btn.configure(state="disabled")
         text = self.box.get("1.0", "end").strip()
         book_id, sentence, start, end = self.target
+        tag = next((value for value, label in EMOTIONS if label == self.feeling.get()), None)
         self.ctx.ui.run_in_thread(
-            lambda: self.ctx.api.create_note(book_id, sentence, start, end, text),
+            lambda: self.ctx.api.create_note(book_id, sentence, start, end, text, emotion_tag=tag),
             self.guard(self._done), self.guard(self._failed))
 
     def _done(self, _: dict[str, Any]) -> None:
@@ -483,30 +521,131 @@ class NoteDialog(ModalDialog):
 
 class EditNoteDialog(ModalDialog):
     def __init__(self, master: tk.Misc, ctx: AppContext, note: dict[str, Any], on_saved: Callable[[], None]):
-        super().__init__(master, "Sửa ghi chú", 520, 260)
+        super().__init__(master, "Sửa trích dẫn", 520, 330)
         self.ctx, self.note, self.on_saved = ctx, note, on_saved
         self.columnconfigure(0, weight=1)
-        _label(self, f"“{note['excerpt']}”", wraplength=470, text_color=("gray30", "gray70")).grid(
+        _label(self, f"“{note['excerpt']}”", wraplength=470, text_color=theme.TEXT_2).grid(
             row=0, column=0, padx=20, pady=(18, 8), sticky="w")
         self.box = ctk.CTkTextbox(self, height=90)
         self.box.insert("1.0", note["note_text"])
         self.box.grid(row=1, column=0, padx=20, sticky="ew")
+        _label(self, "Cảm xúc (không bắt buộc; bấm lại nhãn đang chọn để bỏ)").grid(row=2, column=0, padx=20, pady=(10, 0), sticky="w")
+        self.feeling = ctk.CTkSegmentedButton(self, values=[label for _, label in EMOTIONS], command=self._feeling_clicked)
+        self.feeling.grid(row=3, column=0, padx=20, sticky="w")
+        self._tag: str | None = note.get("emotion_tag")
+        if self._tag:
+            self.feeling.set(next(label for value, label in EMOTIONS if value == self._tag))
         self.status = _label(self, "", text_color=_ERROR_COLOR)
-        self.status.grid(row=2, column=0, padx=20, sticky="w")
+        self.status.grid(row=4, column=0, padx=20, sticky="w")
         buttons = ctk.CTkFrame(self, fg_color="transparent")
-        buttons.grid(row=3, column=0, padx=20, pady=12, sticky="e")
-        ctk.CTkButton(buttons, text="Hủy", width=90, fg_color="gray40", command=self.close).pack(side="left", padx=(0, 8))
+        buttons.grid(row=5, column=0, padx=20, pady=12, sticky="e")
+        ctk.CTkButton(buttons, text="Hủy", width=90, **theme.SECONDARY, command=self.close).pack(side="left", padx=(0, 8))
         ctk.CTkButton(buttons, text="Lưu", width=100, command=self._save).pack(side="left")
+
+    def _feeling_clicked(self, label: str) -> None:
+        value = next(v for v, text in EMOTIONS if text == label)
+        self._tag = None if value == self._tag else value  # the chosen feeling again removes it
+        if self._tag is None:
+            self.feeling.set("")
 
     def _save(self) -> None:
         text = self.box.get("1.0", "end").strip()
+        tag = self._tag
         self.ctx.ui.run_in_thread(
-            lambda: self.ctx.api.update_note(self.note["id"], text),
+            lambda: self.ctx.api.update_note(self.note["id"], note_text=text, emotion_tag=tag),
             self.guard(lambda _: (self.on_saved(), self.close())),
             self.guard(lambda exc: self.status.configure(text=error_text(exc))))
 
 
-# ============================================================ chọn tài liệu (Phòng Đọc → Đổi tài liệu)
+# ============================================================ S01 – Đổi tên tài liệu
+
+
+class EditBookDialog(ModalDialog):
+    """S01 – Sửa thông tin tài liệu: tên, tác giả, thể loại và ảnh bìa."""
+
+    def __init__(self, master: tk.Misc, ctx: AppContext, book: dict[str, Any],
+                 on_saved: Callable[[dict[str, Any]], None]):
+        super().__init__(master, "Sửa thông tin tài liệu", 480, 450)
+        self.ctx, self.book, self.on_saved = ctx, book, on_saved
+        self.cover: Path | None = None
+        self.columnconfigure(0, weight=1)
+        _label(self, "Tên tài liệu").grid(row=0, column=0, padx=20, pady=(20, 0), sticky="w")
+        self.entry = ctk.CTkEntry(self)
+        self.entry.insert(0, book["title"])
+        self.entry.grid(row=1, column=0, padx=20, sticky="ew")
+        self.entry.bind("<Return>", lambda _e: self._save())
+        _label(self, "Tác giả").grid(row=2, column=0, padx=20, pady=(12, 0), sticky="w")
+        self.author_entry = ctk.CTkEntry(self)
+        self.author_entry.insert(0, book.get("author") or "")
+        self.author_entry.grid(row=3, column=0, padx=20, sticky="ew")
+        _label(self, "Thể loại").grid(row=4, column=0, padx=20, pady=(12, 0), sticky="w")
+        self.categories = ctx.app.categories
+        names = ["(Chưa phân loại)"] + [c["name"] for c in self.categories]
+        self.category_box = ctk.CTkComboBox(self, values=names, state="readonly")
+        self.category_box.set((book.get("category") or {}).get("name") or names[0])
+        self.category_box.grid(row=5, column=0, padx=20, sticky="ew")
+        cover_row = ctk.CTkFrame(self, fg_color="transparent")
+        cover_row.grid(row=6, column=0, padx=20, pady=(12, 0), sticky="ew")
+        cover_row.columnconfigure(1, weight=1)
+        CoverView(cover_row, ctx, book["title"], book.get("cover_url"), size=(60, 80)).grid(row=0, column=0, padx=(0, 12))
+        self.cover_label = _label(cover_row, "Ảnh bìa hiện tại", text_color=theme.MUTED)
+        self.cover_label.grid(row=0, column=1, sticky="w")
+        ctk.CTkButton(cover_row, text="Đổi ảnh bìa…", width=120, command=self._choose_cover, **theme.SECONDARY).grid(row=0, column=2)
+        self.status = _label(self, "", text_color=_ERROR_COLOR, wraplength=430)
+        self.status.grid(row=7, column=0, padx=20, pady=(10, 0), sticky="w")
+        buttons = ctk.CTkFrame(self, fg_color="transparent")
+        buttons.grid(row=8, column=0, padx=20, pady=14, sticky="e")
+        ctk.CTkButton(buttons, text="Hủy", width=90, **theme.SECONDARY, command=self.close).pack(side="left", padx=(0, 8))
+        self.save_btn = ctk.CTkButton(buttons, text="Lưu", width=100, command=self._save)
+        self.save_btn.pack(side="left")
+        self.after(200, lambda: (self.entry.focus_set(), self.entry.select_range(0, "end")))
+
+    def _choose_cover(self) -> None:
+        chosen = filedialog.askopenfilename(parent=self, title="Chọn ảnh bìa",
+                                            filetypes=[("Ảnh JPEG/PNG", "*.jpg *.jpeg *.png"), ("Tất cả", "*.*")])
+        if not chosen:
+            return
+        picked = Path(chosen)
+        if picked.stat().st_size > 2 * 1024 * 1024:
+            self.status.configure(text="Ảnh bìa tối đa 2 MB.")
+            return
+        self.cover = picked
+        self.cover_label.configure(text=f"Ảnh mới: {picked.name}", text_color=theme.TEXT)
+        self.status.configure(text="")
+
+    def _save(self) -> None:
+        title, error = check_book_title(self.entry.get())
+        if error or title is None:
+            self.status.configure(text=error or "")
+            return
+        category_id = next((c["id"] for c in self.categories if c["name"] == self.category_box.get()), None)
+        changes: dict[str, Any] = {}
+        if title != self.book["title"]:
+            changes["title"] = title
+        author = " ".join(self.author_entry.get().split())
+        if author != (self.book.get("author") or "").strip():
+            changes["author"] = author
+        if category_id != (self.book.get("category") or {}).get("id"):
+            changes["category_id"] = category_id
+        cover = self.cover
+        if not changes and not cover:
+            self.close()
+            return
+        self.save_btn.configure(state="disabled")
+
+        def work() -> dict[str, Any]:
+            saved = self.ctx.api.update_book(self.book["id"], **changes) if changes else self.book
+            return self.ctx.api.replace_cover(self.book["id"], cover) if cover else saved
+
+        self.ctx.ui.run_in_thread(work, self.guard(self._done), self.guard(self._failed))
+
+    def _done(self, saved: dict[str, Any]) -> None:
+        self.on_saved(saved)
+        self.close()
+
+    def _failed(self, exc: Exception) -> None:
+        self.save_btn.configure(state="normal")
+        self.status.configure(text=error_text(exc))
 
 
 class BookPickerDialog(ModalDialog):
@@ -530,7 +669,7 @@ class BookPickerDialog(ModalDialog):
         for row, book in enumerate(books):
             ctk.CTkButton(
                 self.list, anchor="w", text=f"{book['title']}  ·  {format_number(book['total_sentences'])} câu",
-                fg_color="transparent", text_color=("gray10", "gray90"), hover_color=("gray80", "gray25"),
+                fg_color="transparent", text_color=theme.TEXT, hover_color=theme.SURFACE_3,
                 command=lambda b=book: (self.on_pick(b), self.close()),
             ).grid(row=row, column=0, sticky="ew", pady=1)
 
@@ -573,9 +712,11 @@ class ExportDialog(ModalDialog):
         self.status.grid(row=6, column=0, padx=20, pady=6, sticky="w")
         buttons = ctk.CTkFrame(self, fg_color="transparent")
         buttons.grid(row=7, column=0, padx=20, pady=14, sticky="e")
-        ctk.CTkButton(buttons, text="Đóng", width=90, fg_color="gray40", command=self.close).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(buttons, text="Đóng", width=90, **theme.SECONDARY, command=self.close).pack(side="left", padx=(0, 8))
         self.start_btn = ctk.CTkButton(buttons, text="Bắt đầu xuất", width=130, command=self._start)
         self.start_btn.pack(side="left")
+        self.cancel_btn = ctk.CTkButton(buttons, text="Hủy xuất", width=100, **theme.SECONDARY,
+                                        command=self._cancel_export)
         self.save_btn = ctk.CTkButton(buttons, text="Lưu file…", width=110, command=self._save_file)
         self._estimate()
 
@@ -596,7 +737,7 @@ class ExportDialog(ModalDialog):
         except ValueError as exc:
             self.estimate_label.configure(text=str(exc) or "Khoảng câu phải là số.", text_color=_ERROR_COLOR)
             return
-        self.estimate_label.configure(text="Đang ước tính…", text_color=("gray10", "gray90"))
+        self.estimate_label.configure(text="Đang ước tính…", text_color=theme.TEXT)
         voice = self.ctx.app.current_voice_id
         self.ctx.ui.run_in_thread(
             lambda: self.ctx.api.export_estimate(self.book["id"], start, end, voice),
@@ -611,7 +752,7 @@ class ExportDialog(ModalDialog):
         over = limit and est["chars_used_today"] + est["chars_to_synthesize"] > limit
         if over:
             text += "\nVượt giới hạn ký tự hôm nay: chỉ xuất được phần đã có trong cache."
-        self.estimate_label.configure(text=text, text_color=_WARN_COLOR if over else ("gray10", "gray90"))
+        self.estimate_label.configure(text=text, text_color=_WARN_COLOR if over else theme.TEXT)
 
     def _start(self) -> None:
         try:
@@ -620,10 +761,11 @@ class ExportDialog(ModalDialog):
             self.status.configure(text=str(exc) or "Khoảng câu phải là số.", text_color=_ERROR_COLOR)
             return
         self.start_btn.configure(state="disabled")
-        self.status.configure(text="Đang xuất…", text_color=("gray10", "gray90"))
+        self.status.configure(text="Đang xuất…", text_color=theme.TEXT)
         voice = self.ctx.app.current_voice_id
+        character = self.ctx.app.settings.get("character_voice") or None  # the export is read by the same two voices
         self.ctx.ui.run_in_thread(
-            lambda: self.ctx.api.start_export(self.book["id"], start, end, voice),
+            lambda: self.ctx.api.start_export(self.book["id"], start, end, voice, character),
             self.guard(self._started), self.guard(self._start_failed))
 
     def _start_failed(self, exc: Exception) -> None:
@@ -632,7 +774,17 @@ class ExportDialog(ModalDialog):
 
     def _started(self, job: dict[str, Any]) -> None:
         self.job_id = job["job_id"]
+        self.cancel_btn.configure(state="normal", text="Hủy xuất")
+        self.cancel_btn.pack(side="left", padx=(8, 0))
         self._poll()
+
+    def _cancel_export(self) -> None:
+        if not self.job_id:
+            return
+        job_id = self.job_id
+        self.cancel_btn.configure(state="disabled", text="Đang hủy…")
+        self.ctx.ui.run_in_thread(
+            lambda: self.ctx.api.cancel_export(job_id), lambda _job: None, self.guard(self._start_failed))
 
     def _poll(self) -> None:
         if not self.job_id:
@@ -647,6 +799,12 @@ class ExportDialog(ModalDialog):
         self.progress_label.configure(text=f"{job['done']} / {job['total']} câu")
         if job["status"] == "running":
             self.after(800, self._poll)
+            return
+        self.cancel_btn.pack_forget()
+        if job["status"] == "cancelled":
+            self.start_btn.configure(state="normal")
+            self.progress.set(0)
+            self.status.configure(text="Đã hủy xuất. Phần đã tổng hợp vẫn nằm trong cache.", text_color=_WARN_COLOR)
         elif job["status"] == "done":
             self.status.configure(text=f"✔ Hoàn tất. {job['file_name']}", text_color=_OK_COLOR)
             self.file_name = job["file_name"]
@@ -666,3 +824,235 @@ class ExportDialog(ModalDialog):
             lambda: self.ctx.api.download_export(job_id, target),
             self.guard(lambda _: self.status.configure(text=f"Đã lưu: {target}", text_color=_OK_COLOR)),
             self.guard(self._start_failed))
+
+
+class AmbientDialog(ModalDialog):
+    """Âm thanh nền: choose a sound from the library, its volume, and the chapter chime. Saved as you change them."""
+
+    def __init__(self, master: tk.Misc, ctx: AppContext, on_changed: Callable[[], None]):
+        super().__init__(master, "Âm thanh nền", 460, 500)
+        self.ctx, self.on_changed = ctx, on_changed
+        settings = ctx.app.settings
+        self.choice = tk.StringVar(value=str(settings.get("ambient_track") or 0))
+        self.chime = tk.BooleanVar(value=bool(settings.get("chapter_chime", True)))
+        self._save_job: str | None = None
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        self.list = ctk.CTkScrollableFrame(self, fg_color="transparent", height=200)
+        self.list.grid(row=0, column=0, padx=16, pady=(16, 4), sticky="nsew")
+        _label(self.list, "Đang tải…", text_color=theme.MUTED).pack(anchor="w", pady=6)
+        self.volume_label = _label(self, "", text_color=theme.TEXT_2)
+        self.volume_label.grid(row=1, column=0, padx=20, pady=(8, 0), sticky="w")
+        self.slider = ctk.CTkSlider(self, from_=0, to=100, number_of_steps=20, command=self._volume_moved)
+        self.slider.set(float(settings.get("ambient_volume", 0.4)) * 100)
+        self.slider.grid(row=2, column=0, padx=20, sticky="ew")
+        ctk.CTkCheckBox(self, text="Phát tiếng chuông khi sang chương mới", variable=self.chime,
+                        command=self._chime_changed).grid(row=3, column=0, padx=20, pady=12, sticky="w")
+        self.status = _label(self, "", text_color=_ERROR_COLOR, wraplength=410)
+        self.status.grid(row=4, column=0, padx=20, sticky="w")
+        ctk.CTkButton(self, text="Xong", width=90, command=self.close).grid(row=5, column=0, padx=20, pady=14, sticky="e")
+        self._show_volume()
+        ctx.ui.run_in_thread(ctx.api.list_ambient, self.guard(self._loaded), self.guard(self._failed))
+
+    def _loaded(self, tracks: list[dict[str, Any]]) -> None:
+        for child in self.list.winfo_children():
+            child.destroy()
+        ctk.CTkRadioButton(self.list, text="Tắt", variable=self.choice, value="0", command=self._track_changed).pack(anchor="w", pady=3)
+        for track in tracks:
+            ctk.CTkRadioButton(self.list, text=track["name"], variable=self.choice, value=str(track["id"]),
+                               command=self._track_changed).pack(anchor="w", pady=3)
+        if not tracks:
+            _label(self.list, "Quản trị viên chưa thêm âm thanh nền nào.", text_color=theme.MUTED).pack(anchor="w", pady=6)
+
+    def _failed(self, exc: Exception) -> None:
+        self.status.configure(text=error_text(exc))
+
+    def _show_volume(self) -> None:
+        self.volume_label.configure(text=f"Âm lượng nền: {round(self.slider.get())}%")
+
+    def _volume_moved(self, _value: float) -> None:
+        self._show_volume()
+        self._apply_now()
+        if self._save_job:
+            self.after_cancel(self._save_job)
+        self._save_job = self.after(400, self._save)  # save when the slider rests, not on every step
+
+    def _track_changed(self) -> None:
+        self._apply_now()
+        self._save()
+
+    def _chime_changed(self) -> None:
+        self._apply_now()
+        self._save()
+
+    def _values(self) -> dict[str, Any]:
+        return {"ambient_track": int(self.choice.get() or 0), "ambient_volume": round(self.slider.get()) / 100,
+                "chapter_chime": bool(self.chime.get())}
+
+    def _apply_now(self) -> None:
+        """Hear the change at once, before the server has answered."""
+        self.ctx.app.apply_settings({**self.ctx.app.settings, **self._values()})
+
+    def _save(self) -> None:
+        self._save_job = None
+        payload = {**{k: self.ctx.app.settings[k] for k in ("prefetch_count", "default_speed", "default_voice", "daily_char_limit")},
+                   **self._values()}
+
+        def saved(result: dict[str, Any]) -> None:
+            self.status.configure(text="")
+            self.ctx.app.apply_settings(result)
+            self.on_changed()
+
+        self.ctx.ui.run_in_thread(lambda: self.ctx.api.update_settings(payload), self.guard(saved), self.guard(self._failed))
+
+
+class AddAmbientDialog(ModalDialog):
+    """Admin: add a background sound to the library (a file from disk and a display name)."""
+
+    def __init__(self, master: tk.Misc, ctx: AppContext, on_done: Callable[[], None]):
+        super().__init__(master, "Thêm âm thanh nền", 480, 300)
+        self.ctx, self.on_done = ctx, on_done
+        self.path: Path | None = None
+        self.columnconfigure(0, weight=1)
+        _label(self, "File âm thanh (MP3, OGG, WAV, M4A · tối đa 15 MB)").grid(row=0, column=0, padx=20, pady=(20, 0), sticky="w")
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.grid(row=1, column=0, padx=20, sticky="ew")
+        row.columnconfigure(0, weight=1)
+        self.file_label = _label(row, "Chưa chọn file")
+        self.file_label.grid(row=0, column=0, sticky="ew")
+        ctk.CTkButton(row, text="Chọn file…", width=110, command=self._choose).grid(row=0, column=1)
+        _label(self, "Tên hiển thị").grid(row=2, column=0, padx=20, pady=(12, 0), sticky="w")
+        self.name_entry = ctk.CTkEntry(self)
+        self.name_entry.grid(row=3, column=0, padx=20, sticky="ew")
+        self.status = _label(self, "", text_color=_ERROR_COLOR, wraplength=430)
+        self.status.grid(row=4, column=0, padx=20, pady=(8, 0), sticky="w")
+        buttons = ctk.CTkFrame(self, fg_color="transparent")
+        buttons.grid(row=5, column=0, padx=20, pady=14, sticky="e")
+        ctk.CTkButton(buttons, text="Hủy", width=90, **theme.SECONDARY, command=self.close).pack(side="left", padx=(0, 8))
+        self.add_btn = ctk.CTkButton(buttons, text="Thêm", width=100, state="disabled", command=self._add)
+        self.add_btn.pack(side="left")
+
+    def _choose(self) -> None:
+        chosen = filedialog.askopenfilename(parent=self, title="Chọn file âm thanh",
+                                            filetypes=[("Âm thanh", "*.mp3 *.ogg *.wav *.m4a")])
+        if not chosen:
+            return
+        picked = Path(chosen)
+        if picked.stat().st_size > 15 * 1024 * 1024:
+            self.status.configure(text="File vượt quá 15 MB.")
+            return
+        self.path = picked
+        self.file_label.configure(text=picked.name)
+        if not self.name_entry.get().strip():
+            self.name_entry.insert(0, picked.stem.replace("_", " ")[:100])
+        self.status.configure(text="")
+        self.add_btn.configure(state="normal")
+
+    def _add(self) -> None:
+        name, path = self.name_entry.get().strip(), self.path
+        if not name or path is None:
+            self.status.configure(text="Hãy chọn file và nhập tên.")
+            return
+        self.add_btn.configure(state="disabled")
+        self.status.configure(text="Đang tải lên…", text_color=_WARN_COLOR)
+        self.ctx.ui.run_in_thread(lambda: self.ctx.api.add_ambient(path, name), self.guard(self._done), self.guard(self._failed))
+
+    def _done(self, _track: dict[str, Any]) -> None:
+        self.on_done()
+        self.close()
+
+    def _failed(self, exc: Exception) -> None:
+        self.add_btn.configure(state="normal")
+        self.status.configure(text=error_text(exc), text_color=_ERROR_COLOR)
+
+
+class SleepTimerDialog(ModalDialog):
+    """Hẹn giờ tắt: a countdown, or stop at the end of this chapter. The last 10 s fade out."""
+
+    def __init__(self, master: tk.Misc, ctx: AppContext, on_change: Callable[[], None]):
+        super().__init__(master, "Hẹn giờ tắt", 440, 400)
+        self.ctx, self.on_change = ctx, on_change
+        timer = ctx.reader.sleep
+        self.columnconfigure((0, 1), weight=1)
+        _label(self, "Âm lượng giảm dần trong 10 giây cuối rồi tự tạm dừng và lưu vị trí đọc.",
+               text_color=theme.TEXT_2, wraplength=390).grid(
+            row=0, column=0, columnspan=2, padx=20, pady=(20, 10), sticky="w")
+        for number, minutes in enumerate(MINUTE_PRESETS):
+            selected = timer.mode == "minutes" and timer.minutes == minutes
+            ctk.CTkButton(self, text=f"{minutes} phút", height=40, command=lambda m=minutes: self._minutes(m),
+                          **(theme.ACCENT_SOFT_BUTTON if selected else theme.SECONDARY)).grid(
+                row=1 + number // 2, column=number % 2, padx=(20, 6) if number % 2 == 0 else (6, 20), pady=4, sticky="ew")
+
+        custom = ctk.CTkFrame(self, fg_color="transparent")
+        custom.grid(row=3, column=0, columnspan=2, padx=20, pady=(8, 4), sticky="w")
+        _label(custom, "Tùy chỉnh").pack(side="left")
+        self.custom_entry = ctk.CTkEntry(custom, width=90, placeholder_text=f"1–{CUSTOM_MINUTES_MAX}")
+        self.custom_entry.pack(side="left", padx=8)
+        self.custom_entry.bind("<Return>", lambda _e: self._custom())
+        _label(custom, "phút").pack(side="left")
+        ctk.CTkButton(custom, text="Đặt", width=60, command=self._custom, **theme.SECONDARY).pack(side="left", padx=8)
+
+        ctk.CTkButton(self, text="Dừng khi hết chương này", height=40, command=self._chapter,
+                      **(theme.ACCENT_SOFT_BUTTON if timer.mode == "chapter" else theme.SECONDARY)).grid(
+            row=4, column=0, columnspan=2, padx=20, pady=8, sticky="ew")
+        self.status = _label(self, "", text_color=_ERROR_COLOR)
+        self.status.grid(row=5, column=0, columnspan=2, padx=20, sticky="w")
+        buttons = ctk.CTkFrame(self, fg_color="transparent")
+        buttons.grid(row=6, column=0, columnspan=2, padx=20, pady=12, sticky="ew")
+        self.off_btn = ctk.CTkButton(buttons, text="Tắt hẹn giờ", width=110, command=self._off,
+                                     state="normal" if timer.active else "disabled", **theme.GHOST)
+        self.off_btn.pack(side="left")
+        ctk.CTkButton(buttons, text="Đóng", width=90, command=self.close, **theme.SECONDARY).pack(side="right")
+
+    def _apply(self, action: Callable[[], None]) -> None:
+        action()
+        self.on_change()
+        self.close()
+
+    def _minutes(self, minutes: int) -> None:
+        self._apply(lambda: self.ctx.reader.sleep_minutes(minutes))
+
+    def _custom(self) -> None:
+        minutes = parse_custom_minutes(self.custom_entry.get())
+        if minutes is None:
+            self.status.configure(text=f"Nhập số phút nguyên từ 1 đến {CUSTOM_MINUTES_MAX}.")
+            return
+        self._minutes(minutes)
+
+    def _chapter(self) -> None:
+        self._apply(self.ctx.reader.sleep_chapter)
+
+    def _off(self) -> None:
+        self._apply(self.ctx.reader.sleep_cancel)
+
+
+class ChapterListDialog(ModalDialog):
+    """Mục lục: pick a chapter to start playing from its first sentence."""
+
+    def __init__(self, master: tk.Misc, ctx: AppContext, chapters: list[dict[str, Any]], current: int | None,
+                 on_pick: Callable[[dict[str, Any]], None]):
+        super().__init__(master, "Mục lục", 520, 560)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        listing = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        listing.grid(row=0, column=0, padx=16, pady=(16, 6), sticky="nsew")
+        listing.columnconfigure(0, weight=1)
+        for row, chapter in enumerate(chapters):
+            is_current = chapter["chapter_index"] == current
+            item = ctk.CTkFrame(listing, corner_radius=10, fg_color=theme.ACCENT_SOFT if is_current else "transparent")
+            item.grid(row=row, column=0, sticky="ew", pady=2)
+            title = ctk.CTkLabel(item, text=chapter["title"], anchor="w", justify="left", wraplength=420,
+                                 font=theme.font(13, "bold" if is_current else "normal"),
+                                 text_color=theme.ACCENT if is_current else theme.TEXT)
+            title.pack(fill="x", padx=14, pady=(8, 0))
+            meta = ctk.CTkLabel(item, text=describe_chapter(chapter, format_number), anchor="w",
+                                text_color=theme.MUTED, font=theme.font(11))
+            meta.pack(fill="x", padx=14, pady=(0, 8))
+            for widget in (item, title, meta):  # the whole row is the button
+                widget.bind("<Button-1>", lambda _e, c=chapter: (on_pick(c), self.close()))
+                widget.configure(cursor="hand2")
+                if not is_current:
+                    widget.bind("<Enter>", lambda _e, f=item: f.configure(fg_color=theme.SURFACE_2))
+                    widget.bind("<Leave>", lambda _e, f=item: f.configure(fg_color="transparent"))
+        ctk.CTkButton(self, text="Đóng", width=90, command=self.close, **theme.SECONDARY).grid(
+            row=1, column=0, padx=16, pady=(4, 14), sticky="e")

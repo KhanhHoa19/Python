@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Download } from 'lucide-react';
-import { estimateExport, exportFileUrl, getExportJob, startExport } from '../../api/exportApi.ts';
+import { cancelExport, downloadExport, estimateExport, getExportJob, startExport } from '../../api/exportApi.ts';
 import { formatNumber } from '../../lib/format.ts';
 import { Book } from '../../types/book.ts';
 import { ExportEstimate, ExportJob } from '../../types/export.ts';
@@ -14,7 +14,7 @@ interface ExportDialogProps {
 
 /** S07 – Xuất audio. */
 export const ExportDialog: React.FC<ExportDialogProps> = ({ book, onClose }) => {
-  const { voiceId } = useApp();
+  const { voiceId, settings } = useApp();
   const [mode, setMode] = useState<'all' | 'range'>('all');
   const [from, setFrom] = useState('1');
   const [to, setTo] = useState(String(book.total_sentences));
@@ -60,9 +60,39 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({ book, onClose }) => 
     if (!r) return;
     setError(null);
     try {
-      setJob(await startExport(book.id, { from_index: r.from, to_index: r.to, voice: voiceId }));
+      setJob(await startExport(book.id, { from_index: r.from, to_index: r.to, voice: voiceId, dialogue_voice: settings?.character_voice || null }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không bắt đầu xuất được.');
+    }
+  };
+
+  const [cancelling, setCancelling] = useState(false);
+  useEffect(() => setCancelling(false), [job?.job_id]);
+  const cancel = async () => {
+    if (!job) return;
+    setCancelling(true);
+    try {
+      await cancelExport(job.job_id);
+    } catch (err) {
+      setCancelling(false);
+      setError(err instanceof Error ? err.message : 'Không hủy được.');
+    }
+  };
+
+  const [saving, setSaving] = useState(false);
+  const save = async (finished: ExportJob) => {
+    setSaving(true);
+    try {
+      const url = URL.createObjectURL(await downloadExport(finished.job_id));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = finished.file_name ?? 'audiobook';
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không tải được file.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -101,6 +131,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({ book, onClose }) => 
             <progress className="progress-native" value={job.done} max={Math.max(job.total, 1)} aria-label="Tiến trình xuất" />
             <p className="muted">{job.done} / {job.total} câu</p>
             {job.status === 'done' && <p className="status-text ok">✔ Hoàn tất. {job.file_name}</p>}
+            {job.status === 'cancelled' && <p className="status-text warn">Đã hủy xuất. Phần đã tổng hợp vẫn nằm trong cache.</p>}
             {job.status === 'failed' && <p className="status-text error" role="alert">Xuất thất bại: {job.error}</p>}
           </div>
         )}
@@ -109,11 +140,14 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({ book, onClose }) => 
         <div className="modal-actions">
           <button className="btn-secondary" onClick={onClose}>Đóng</button>
           {job?.status === 'done' ? (
-            <a className="btn-primary link-button" href={exportFileUrl(job.job_id)} download={job.file_name ?? undefined}>
-              <Download size={16} /> Tải về
-            </a>
+            <button className="btn-primary" onClick={() => void save(job)} disabled={saving}>
+              <Download size={16} /> {saving ? 'Đang tải…' : 'Tải về'}
+            </button>
           ) : (
-            <button className="btn-primary" onClick={start} disabled={running || !range()}>Bắt đầu xuất</button>
+            <>
+              {running && <button className="btn-secondary" onClick={cancel} disabled={cancelling}>{cancelling ? 'Đang hủy…' : 'Hủy xuất'}</button>}
+              <button className="btn-primary" onClick={start} disabled={running || !range()}>Bắt đầu xuất</button>
+            </>
           )}
         </div>
       </div>

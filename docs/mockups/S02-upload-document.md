@@ -2,6 +2,9 @@
 
 **Mục đích:** tải file lên để backend phân tích và tách câu.  **Mở từ:** S01 (`+ Thêm tài liệu`).
 
+## Thể loại, ảnh bìa và sách hệ thống
+Thêm vào hộp thoại: **Thể loại** (chọn 1 trong 15 tag, mặc định *Khác*; admin chọn khi đăng sách hệ thống), **Ảnh bìa** (không bắt buộc, JPEG/PNG ≤ 2 MB; bỏ trống thì PDF dùng trang đầu, sách khác tự tạo bìa theo thể loại) và, **chỉ với admin**, ô `Công khai cho mọi người (sách hệ thống, hiện trong Khám phá)`. Ảnh bìa không hợp lệ → lỗi `400`, **không tạo sách**.
+
 ## Bố cục
 ```
 ┌ Thêm tài liệu ──────────────────────────────── ✕ ┐
@@ -39,6 +42,8 @@
 ## API
 `POST /api/books/ingest` (multipart: `file`, `title`, `author`) → `201 {book_id, total_sentences,…}`.
 > Backend nhận `.txt .md .pdf .docx` (≤ 10 MB). PDF scan không có chữ trả `400` với thông điệp nhắc OCR.
+>
+> **Font tiếng Việt đời cũ (VietWare `.VnTime`, `.VnNCentury`…)** trong PDF/DOCX/TXT được nhận diện và giải mã tự động sang Unicode; dòng tiêu đề chạy, số trang và dòng chấm dẫn của mục lục bị loại bỏ. Các bảng mã cũ khác (VNI, TCVN3) **chưa được hỗ trợ**.
 
 ## Ghi chú theo client
 - **Web:** kéo thả HTML5 + `<input type=file>`.

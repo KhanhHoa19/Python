@@ -8,6 +8,8 @@ interface ShortcutHandlers {
   onFaster: () => void;
   onSlower: () => void;
   onNote: () => void;
+  /** B: save the sentence being read as a favourite quote. */
+  onBookmark: () => void;
 }
 
 function isTyping(target: EventTarget | null): boolean {
@@ -15,9 +17,9 @@ function isTyping(target: EventTarget | null): boolean {
   return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
 }
 
-/** Space / ← → / ↑ ↓ / N while the reader is visible and no field has focus. */
+/** Space / ← → / ↑ ↓ / N / B while the reader is visible and no field has focus. */
 export function useReaderShortcuts(handlers: ShortcutHandlers): void {
-  const { enabled, onToggle, onNext, onPrevious, onFaster, onSlower, onNote } = handlers;
+  const { enabled, onToggle, onNext, onPrevious, onFaster, onSlower, onNote, onBookmark } = handlers;
   useEffect(() => {
     if (!enabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -30,6 +32,7 @@ export function useReaderShortcuts(handlers: ShortcutHandlers): void {
         ArrowUp: onFaster,
         ArrowDown: onSlower,
         KeyN: onNote,
+        KeyB: onBookmark,
       };
       const action = actions[event.code];
       if (action) {
@@ -39,5 +42,5 @@ export function useReaderShortcuts(handlers: ShortcutHandlers): void {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [enabled, onToggle, onNext, onPrevious, onFaster, onSlower, onNote]);
+  }, [enabled, onToggle, onNext, onPrevious, onFaster, onSlower, onNote, onBookmark]);
 }

@@ -1,5 +1,6 @@
 export interface ExportRequest {
   from_index: number;
+  dialogue_voice?: string | null;
   to_index?: number | null;
   voice?: string | null;
   speed?: number;
@@ -18,7 +19,7 @@ export interface ExportEstimate {
 
 export interface ExportJob {
   job_id: string;
-  status: 'running' | 'done' | 'failed';
+  status: 'running' | 'done' | 'failed' | 'cancelled';
   done: number;
   total: number;
   file_name: string | null;

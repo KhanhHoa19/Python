@@ -20,14 +20,15 @@ class SessionTracker:
         self,
         book_id: int,
         total_sentences: int,
+        user_id: int,
         bookmark_repo: SqlBookmarkRepository | None = None,
         session_repo: SqlSessionRepository | None = None,
     ):
         engine = get_db_engine()
         self.book_id = book_id
         self.total_sentences = total_sentences
-        self.bookmark_repo = bookmark_repo or SqlBookmarkRepository(engine)
-        self.session_repo = session_repo or SqlSessionRepository(engine)
+        self.bookmark_repo = bookmark_repo or SqlBookmarkRepository(engine, user_id)
+        self.session_repo = session_repo or SqlSessionRepository(engine, user_id)
 
         self.start_dt = datetime.now(UTC)
         self.start_perf = time.perf_counter()

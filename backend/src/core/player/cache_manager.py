@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
+import re
 from pathlib import Path
 
 from src.core.config import get_settings
@@ -20,10 +22,23 @@ class AudioCacheManager:
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
-    def compute_key(sentence_text: str, voice: str, speed: float) -> str:
-        """Generate deterministic SHA-256 cache key from sentence text and speech settings."""
+    def compute_key(sentence_text: str, voice: str, speed: float, namespace: str = "") -> str:
+        """Deterministic SHA-256 cache key from the text, voice, speed and the provider `namespace`.
+
+        The namespace (provider name, plus model for providers that have several) keeps audio made
+        by one provider/model from being served for another. An empty namespace gives the original
+        pre-namespace key, which the CLI still uses and which `find_legacy` migrates from.
+        """
         normalized = f"{sentence_text.strip()}:{voice}:{speed:.2f}"
+        if namespace:
+            normalized = f"{namespace}\x1f{normalized}"
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    def adopt(self, book_id: int, old_path: Path, new_key: str) -> Path:
+        """Rename a cached file to a new key (same folder, same extension) and return its new path."""
+        target = old_path.with_name(f"{new_key}{old_path.suffix}")
+        os.replace(old_path, target)
+        return target
 
     def _get_book_dir(self, book_id: int) -> Path:
         """Return and create target directory for a given book."""
@@ -60,3 +75,23 @@ class AudioCacheManager:
                 f.unlink(missing_ok=True)
                 count += 1
         return count
+
+
+_VOICE_SHAPES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("heygen", re.compile(r"^[0-9a-f]{32}$")),
+    ("edge-tts", re.compile(r"^[a-z]{2,3}-[A-Z]{2}(?:-[A-Za-z]+)?-\w+Neural$")),
+    ("openai", re.compile(r"^(?:alloy|ash|ballad|coral|echo|fable|nova|onyx|sage|shimmer|verse)$")),
+    ("mock", re.compile(r"^mock-")),
+)
+
+
+def voice_provider_hint(voice: str) -> str | None:
+    """Which provider a voice id belongs to, judging by its shape (None if unknown).
+
+    Used only to adopt audio cached before keys carried a provider: such a file is moved to the new
+    key only if the voice clearly belongs to the provider that is active now.
+    """
+    for provider, shape in _VOICE_SHAPES:
+        if shape.match(voice):
+            return provider
+    return None

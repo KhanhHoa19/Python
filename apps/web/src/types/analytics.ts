@@ -15,6 +15,14 @@ export interface DailyStat {
   sessions: number;
 }
 
+export interface VoiceStat {
+  voice: string;
+  display_name: string;
+  minutes: number;
+  words: number;
+  sessions: number;
+}
+
 export interface Metrics {
   total_calls: number;
   avg_latency_ms: number;

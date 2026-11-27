@@ -10,6 +10,7 @@ from dataclasses import dataclass
 PROVIDER_HOSTS: dict[str, str] = {
     "edge-tts": "speech.platform.bing.com",
     "openai": "api.openai.com",
+    "heygen": "api.heygen.com",
 }
 
 

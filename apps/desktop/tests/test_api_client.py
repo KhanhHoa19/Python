@@ -100,3 +100,23 @@ def test_download_export_writes_file(tmp_path) -> None:
     target = tmp_path / "out.wav"
     client.download_export("job1", target)
     assert target.read_bytes() == b"audio-bytes"
+
+
+def test_rename_book_sends_patch_with_the_new_title() -> None:
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.update(method=req.method, path=req.url.path, body=req.read())
+        return httpx.Response(200, json={"id": 4, "title": "Tên mới"})
+
+    result = make_client(handler).rename_book(4, "Tên mới")
+    assert result["title"] == "Tên mới"
+    assert seen["method"] == "PATCH" and seen["path"] == "/api/books/4"
+    assert "Tên mới".encode() in seen["body"] or b"T\\u00ean" in seen["body"]
+
+
+def test_rename_book_error_is_reported_as_api_error() -> None:
+    client = make_client(lambda req: httpx.Response(400, json={"error": "Validation error"}))
+    with pytest.raises(ApiError) as info:
+        client.rename_book(4, "x")
+    assert info.value.status == 400

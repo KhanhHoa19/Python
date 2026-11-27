@@ -9,14 +9,17 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
 import config
 from api_client import ApiClient, ApiError
+from player.ambient import AmbientPlayer
 from player.audio_output import AudioOutput
+from player.chime import make_chime_wav
 from player.engine import EngineCallbacks, PlaybackEngine
+from player.sleep_timer import FADE_SECONDS, SleepTimer, chapter_end, fade_volume
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,7 @@ class OpenBook:
     book_id: int
     title: str
     sentences: list[dict[str, Any]]
+    chapters: list[dict[str, Any]] = field(default_factory=list)  # table of contents; empty if unavailable
 
 
 class ReaderController:
@@ -43,14 +47,23 @@ class ReaderController:
         self.book: OpenBook | None = None
         self.index = 0
         self.voice: str | None = None
+        self.character_voice: str | None = None  # reads the dialogue in quotation marks; None = the narrator reads everything
+        self.saved_voice: str | None = None  # voice remembered in the open book's bookmark
         self.speed = 1.0
         self.prefetch = 2
+        self.fetch_workers = 2  # benchmark: one downloader stalls 45% at 1.5x when TTS takes 3 s
         self._engine: PlaybackEngine | None = None
         self._session_started: datetime | None = None
         self._session_seconds = 0.0
         self._session_sentences = 0
         self._session_words = 0
         self._last_bookmark_save = 0.0
+        self.sleep = SleepTimer()
+        self.ambient = AmbientPlayer(output, fetch=lambda track_id: api.fetch_ambient(track_id))
+        self.chapter_chime = True
+        self._chime: bytes | None = None
+        self._last_started: int | None = None  # the sentence that started last: a chime only marks a continuous move
+        self._volume = 1.0
         self._lock = threading.Lock()
 
     # -- state -------------------------------------------------------------------------
@@ -81,7 +94,12 @@ class ReaderController:
         sentences = self.api.get_sentences(book_id)
         bookmark = self.api.get_bookmark(book_id)
         self.close_book()
-        self.book = OpenBook(book_id, title, sentences)
+        try:
+            chapters = self.api.get_chapters(book_id)
+        except ApiError:  # no table of contents is not a reason to refuse reading
+            chapters = []
+        self.book = OpenBook(book_id, title, sentences, chapters)
+        self.saved_voice = bookmark.get("voice") or None
         start = int(bookmark.get("current_sentence_index", 0))
         self.index = min(max(start, 0), max(len(sentences) - 1, 0))
         return self.index
@@ -89,6 +107,7 @@ class ReaderController:
     def close_book(self) -> None:
         """Stop playback and flush bookmark + session for the current book."""
         self._stop_engine()
+        self.sleep_cancel()  # a timer never carries over to another book
         self._flush_session(blocking=True)
         self._save_bookmark(blocking=True)
         self.book = None
@@ -102,18 +121,20 @@ class ReaderController:
         if index is not None:
             self.index = min(max(index, 0), self.total - 1)
         self._stop_engine()
+        self._last_started = None
         self._ensure_session()
         # Announce "playing" BEFORE starting threads: a fast failure would otherwise report
         # "stopped" first and this call would then overwrite it with a stale "playing".
-        self.listener.on_state("playing")
+        self._announce("playing")
         self._engine = PlaybackEngine(
             fetch=self._fetch, output=self.output, total=self.total,
             callbacks=EngineCallbacks(
                 on_start=self._on_start, on_end=self._on_end, on_skip=self._on_skip,
-                on_finished=self._on_finished, on_fatal=self._on_fatal,
+                on_finished=self._on_finished, on_fatal=self._on_fatal, on_stop_point=self._on_stop_point,
             ),
-            prefetch=self.prefetch,
+            prefetch=self.prefetch, fetch_workers=self.fetch_workers, before_sentence=self._chime_before,
         )
+        self._engine.stop_after = self._stop_point(self.index)
         self._engine.start(self.index)
 
     def toggle(self) -> None:
@@ -121,11 +142,11 @@ class ReaderController:
             self._engine.pause()
             self._flush_session(blocking=False)
             self._save_bookmark(blocking=False)
-            self.listener.on_state("paused")
+            self._announce("paused")
         elif self.is_paused and self._engine:
             self._engine.resume()
             self._ensure_session()
-            self.listener.on_state("playing")
+            self._announce("playing")
         else:
             self.play()
 
@@ -133,7 +154,7 @@ class ReaderController:
         self._stop_engine()
         self._flush_session(blocking=False)
         self._save_bookmark(blocking=False)
-        self.listener.on_state("stopped")
+        self._announce("stopped")
 
     def jump(self, index: int, autoplay: bool | None = None) -> None:
         """Move to a sentence. Keeps playing if it was playing (or if autoplay is True)."""
@@ -163,18 +184,102 @@ class ReaderController:
     def set_voice(self, voice: str | None) -> None:
         if voice == self.voice:
             return
+        self._flush_session(blocking=False)  # a session belongs to one voice
         self.voice = voice
         if self.is_playing or self.is_paused:
             self.play(self.index)
+
+    def set_character_voice(self, voice: str | None) -> None:
+        """Multi-voice narration on (a voice) or off (None); a change restarts the sentence being read."""
+        voice = voice or None
+        if voice == self.character_voice:
+            return
+        self.character_voice = voice
+        if self.is_playing or self.is_paused:
+            self.play(self.index)
+
+    # -- sleep timer ---------------------------------------------------------------------------
+
+    def _stop_point(self, index: int) -> int | None:
+        """Last sentence to play before stopping, when the timer is in "end of chapter" mode."""
+        if self.sleep.mode != "chapter" or not self.book:
+            return None
+        return chapter_end(self.book.sentences, index)
+
+    def _set_volume(self, volume: float) -> None:
+        if volume != self._volume:
+            self._volume = volume
+            self.output.set_volume(volume)
+            self.ambient.set_fade(volume)  # the sleep timer's fade-out lowers the background too
+
+    def _announce(self, state: str) -> None:
+        """Tell the UI the state changed; the background sound plays only while the reader does."""
+        self.ambient.set_playing(state == "playing")
+        self.listener.on_state(state)
+
+    def _chime_before(self, index: int) -> bytes | None:
+        """The chapter chime, when playback moves on by itself into the first sentence of a new chapter."""
+        book = self.book
+        if not self.chapter_chime or not book or index <= 0 or self._last_started != index - 1 or index >= len(book.sentences):
+            return None
+        if book.sentences[index].get("chapter_index") == book.sentences[index - 1].get("chapter_index"):
+            return None
+        if self._chime is None:
+            self._chime = make_chime_wav()
+        return self._chime
+
+    def sleep_minutes(self, minutes: int) -> None:
+        self.sleep.start_minutes(minutes)
+        self._set_volume(1.0)
+        if self._engine:
+            self._engine.stop_after = None
+
+    def sleep_chapter(self) -> None:
+        self.sleep.start_chapter()
+        self._set_volume(1.0)
+        if self._engine:
+            self._engine.stop_after = self._stop_point(self.index)
+
+    def sleep_cancel(self) -> None:
+        self.sleep.cancel()
+        self._set_volume(1.0)
+        if self._engine:
+            self._engine.stop_after = None
+
+    def sleep_tick(self) -> str:
+        """Call about 5 times a second from the UI thread. Fades, pauses when time is up, returns the button text."""
+        timer = self.sleep
+        if not timer.active:
+            return timer.label()
+        playing = self.is_playing
+        remaining = timer.tick(playing)
+        if timer.mode == "minutes":
+            self._set_volume(fade_volume(remaining))
+            if remaining <= 0:
+                if playing:
+                    self.toggle()  # pause + save the position
+                self.sleep_cancel()  # restores the volume for the next listen
+                self.listener.on_warning("Hết giờ hẹn: đã tạm dừng.")
+        elif playing and self._engine and self.book and self.index == chapter_end(self.book.sentences, self.index):
+            length = self._engine.sentence_length
+            self._set_volume(fade_volume(self._engine.sentence_remaining(), min(FADE_SECONDS, length)))
+        else:
+            self._set_volume(1.0)
+        return timer.label()
 
     # -- engine callbacks (worker threads) ----------------------------------------------------
 
     def _fetch(self, index: int) -> tuple[bytes, str]:
         assert self.book is not None
+        if self.character_voice:
+            return self.api.fetch_audio(self.book.book_id, index, self.speed, self.voice, self.character_voice)
         return self.api.fetch_audio(self.book.book_id, index, self.speed, self.voice)
 
     def _on_start(self, index: int) -> None:
         self.index = index
+        self._last_started = index
+        if self._engine:
+            self._engine.stop_after = self._stop_point(index)
         self.listener.on_position(index)
         now = time.monotonic()
         if now - self._last_bookmark_save >= config.BOOKMARK_SAVE_INTERVAL_SECONDS:
@@ -194,12 +299,26 @@ class ReaderController:
     def _on_finished(self) -> None:
         self._flush_session(blocking=False)
         self._save_bookmark(blocking=False)
-        self.listener.on_state("finished")
+        self._announce("finished")
+
+    def _on_stop_point(self, index: int) -> None:
+        """The sleep timer's chapter ended: stop on the first sentence of the next chapter, ready to resume."""
+        self.sleep.cancel()
+        self._set_volume(1.0)
+        if index + 1 >= self.total:
+            self._on_finished()
+            return
+        self.index = index + 1
+        self._flush_session(blocking=False)
+        self._save_bookmark(blocking=False)
+        self.listener.on_position(self.index)
+        self._announce("stopped")
+        self.listener.on_warning("Đã dừng hết chương theo hẹn giờ.")
 
     def _on_fatal(self, message: str) -> None:
         self._flush_session(blocking=False)
         self._save_bookmark(blocking=False)
-        self.listener.on_state("stopped")
+        self._announce("stopped")
         self.listener.on_error(message)
 
     # -- bookmark / session reporting ------------------------------------------------------------
@@ -220,6 +339,7 @@ class ReaderController:
             sentences, words = self._session_sentences, self._session_words
             self._session_started, self._session_seconds = None, 0.0
             self._session_sentences = self._session_words = 0
+            voice = self.voice
         if started is None or sentences == 0 or not self.book:
             return
         payload = {
@@ -230,6 +350,8 @@ class ReaderController:
             "sentences_read": sentences,
             "words_read": words,
         }
+        if voice:
+            payload["voice"] = voice
         self._run(lambda: self.api.record_session(payload), blocking)
 
     def _save_bookmark(self, blocking: bool) -> None:
@@ -238,7 +360,8 @@ class ReaderController:
         book_id, index = self.book.book_id, min(self.index, self.total - 1)
         chapter = int(self.book.sentences[index].get("chapter_index", 1))
         percent = round((index + 1) / self.total * 100.0, 1)
-        self._run(lambda: self.api.save_bookmark(book_id, chapter, index, percent), blocking)
+        voice = self.voice
+        self._run(lambda: self.api.save_bookmark(book_id, chapter, index, percent, voice), blocking)
 
     def _run(self, job: Any, blocking: bool) -> None:
         def safe() -> None:

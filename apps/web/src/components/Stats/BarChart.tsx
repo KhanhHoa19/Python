@@ -1,4 +1,6 @@
 import React, { useEffect, useRef } from 'react';
+import { useApp } from '../../context/AppContext.tsx';
+import { cssVar } from '../../hooks/useTheme.ts';
 import { BarController, BarElement, CategoryScale, Chart, LinearScale, Tooltip } from 'chart.js';
 
 Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip);
@@ -15,21 +17,22 @@ interface BarChartProps {
 export const BarChart: React.FC<BarChartProps> = ({ title, labels, values, color, unit }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<Chart | null>(null);
+  const { theme } = useApp();
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const chart = new Chart(canvas, {
       type: 'bar',
-      data: { labels, datasets: [{ label: title, data: values, backgroundColor: color, borderRadius: 4 }] },
+      data: { labels, datasets: [{ label: title, data: values, backgroundColor: cssVar(color, '#f0a93e'), borderRadius: 6 }] },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         animation: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? false : undefined,
         plugins: { legend: { display: false } },
         scales: {
-          x: { ticks: { color: '#94a3b8', maxRotation: 45, autoSkip: true }, grid: { display: false } },
-          y: { beginAtZero: true, ticks: { color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,0.15)' } },
+          x: { ticks: { color: cssVar('--muted', '#928a7c'), maxRotation: 45, autoSkip: true }, grid: { display: false } },
+          y: { beginAtZero: true, ticks: { color: cssVar('--muted', '#928a7c') }, grid: { color: cssVar('--border', '#34302a') } },
         },
       },
     });
@@ -38,7 +41,7 @@ export const BarChart: React.FC<BarChartProps> = ({ title, labels, values, color
       chart.destroy();
       chartRef.current = null;
     };
-  }, [title, labels, values, color]);
+  }, [title, labels, values, color, theme]);
 
   const total = values.reduce((a, b) => a + b, 0);
   return (

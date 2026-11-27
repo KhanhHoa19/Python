@@ -13,6 +13,7 @@ class BookmarkResponse(BaseModel):
     current_sentence_index: int
     completion_percentage: float
     last_read_at: str | None = None
+    voice: str | None = None
 
 
 class BookmarkUpdateRequest(BaseModel):
@@ -20,6 +21,7 @@ class BookmarkUpdateRequest(BaseModel):
     current_chapter: int = Field(default=1, ge=0)
     current_sentence_index: int = Field(ge=0)
     completion_percentage: float = Field(default=0.0, ge=0.0, le=100.0)
+    voice: str | None = Field(default=None, max_length=255)
 
 
 class ReadingSessionCreateRequest(BaseModel):
@@ -29,6 +31,7 @@ class ReadingSessionCreateRequest(BaseModel):
     words_read: int = Field(default=0, ge=0)
     start_time: str
     end_time: str
+    voice: str | None = Field(default=None, max_length=255)
 
 
 class ReadingSessionResponse(BaseModel):
@@ -39,4 +42,5 @@ class ReadingSessionResponse(BaseModel):
     duration_seconds: int
     sentences_read: int
     words_read: int
+    voice: str | None = None
     created_at: str | None = None

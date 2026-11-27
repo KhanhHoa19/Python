@@ -40,6 +40,14 @@ class Book:
     total_words: int = 0
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    owner_id: int | None = None  # None = system book (uploaded by an admin, is_public)
+    is_public: bool = False
+    category_id: int | None = None
+    cover_path: str | None = None  # file name inside the cover folder
+    search_text: str | None = None  # accent-free title + author, for searching
+
+    def can_view(self, user_id: int) -> bool:
+        return self.is_public or self.owner_id == user_id
 
     def __post_init__(self) -> None:
         if len(self.title) > 255:
@@ -84,6 +92,7 @@ class Bookmark:
     current_sentence_index: int = 0
     completion_percentage: float = 0.0
     last_read_at: datetime | None = None
+    voice: str | None = None  # last voice used for this book
 
     def __post_init__(self) -> None:
         if not (0.0 <= self.completion_percentage <= 100.0):
@@ -91,3 +100,17 @@ class Bookmark:
             self.completion_percentage = max(0.0, min(100.0, self.completion_percentage))
         if self.current_sentence_index < 0:
             raise ValueError("current_sentence_index must be >= 0")
+
+
+@dataclass
+class Chapter:
+    """A chapter of a book: its title and the (inclusive) range of sentence indexes it covers."""
+    chapter_index: int
+    title: str
+    start_sentence_index: int
+    end_sentence_index: int
+    word_count: int = 0
+
+    @property
+    def sentence_count(self) -> int:
+        return self.end_sentence_index - self.start_sentence_index + 1

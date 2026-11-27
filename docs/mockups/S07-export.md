@@ -24,10 +24,12 @@
 - Backend ghép trực tiếp: WAV bằng module `wave`, MP3 bằng nối byte. Không chuyển đổi định dạng (không cần ffmpeg).
 
 ## Trạng thái
-`idle` → `running` → `done` (có nút tải) hoặc `failed` (`Xuất thất bại: <lý do>. [Thử lại]`).
+`idle` → `running` → `done` (có nút tải), `failed` (`Xuất thất bại: <lý do>. [Thử lại]`) hoặc `cancelled`.
+
+Trong lúc `running` có nút **Hủy xuất** (cạnh `Bắt đầu xuất`). Backend dừng sau câu đang tổng hợp; không tạo file; phần audio đã tổng hợp vẫn nằm trong cache. Thông báo: `Đã hủy xuất. Phần đã tổng hợp vẫn nằm trong cache.`
 
 ## API
-`GET /api/books/{id}/export/estimate?from_index=&to_index=&voice=` · `POST /api/books/{id}/export` → `{job_id}` · `GET /api/exports/{job_id}` (tiến trình) · `GET /api/exports/{job_id}/file`.
+`GET /api/books/{id}/export/estimate?from_index=&to_index=&voice=` · `POST /api/books/{id}/export` → `{job_id}` · `GET /api/exports/{job_id}` (tiến trình) · `DELETE /api/exports/{job_id}` (hủy, trả trạng thái hiện tại) · `GET /api/exports/{job_id}/file`.
 
 ## Ghi chú theo client
 - **Web:** tải bằng thẻ `<a download>`.

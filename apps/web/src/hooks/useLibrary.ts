@@ -1,26 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { listBooks } from '../api/booksApi.ts';
-import { listNotes } from '../api/notesApi.ts';
-import { fetchBookmark } from '../api/playerApi.ts';
 import { BookWithProgress } from '../types/book.ts';
-import { Note } from '../types/note.ts';
 
 export interface LibraryData {
+  /** The whole shelf, unfiltered (used for "resume the book you were reading"). */
   books: BookWithProgress[];
-  notes: Note[];
   loading: boolean;
   error: string | null;
   loaded: boolean;
+  /** Changes on every reload: screens that fetch their own filtered lists reload when it changes. */
+  version: number;
   reload: () => Promise<BookWithProgress[]>;
 }
 
-/** Books with their reading progress, plus all notes. Shared by the library and the startup resume. */
+/** The user's shelf (each book already carries its progress). Shared by the library, quotes and the startup resume. */
 export function useLibrary(): LibraryData {
   const [books, setBooks] = useState<BookWithProgress[]>([]);
-  const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [version, setVersion] = useState(0);
   const latest = useRef(0);
 
   const reload = useCallback(async (): Promise<BookWithProgress[]> => {
@@ -28,16 +27,13 @@ export function useLibrary(): LibraryData {
     setLoading(true);
     setError(null);
     try {
-      const [plain, allNotes] = await Promise.all([listBooks(), listNotes()]);
-      const withProgress = await Promise.all(
-        plain.map(async (book) => ({ ...book, bookmark: await fetchBookmark(book.id).catch(() => null) })),
-      );
+      const shelf = await listBooks();
       if (id === latest.current) {
-        setBooks(withProgress);
-        setNotes(allNotes);
+        setBooks(shelf);
         setLoaded(true);
+        setVersion((v) => v + 1);
       }
-      return withProgress;
+      return shelf;
     } catch (err) {
       if (id === latest.current) setError(err instanceof Error ? err.message : 'Không tải được thư viện.');
       return [];
@@ -50,5 +46,5 @@ export function useLibrary(): LibraryData {
     void reload();
   }, [reload]);
 
-  return { books, notes, loading, error, loaded, reload };
+  return { books, loading, error, loaded, version, reload };
 }

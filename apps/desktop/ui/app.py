@@ -23,6 +23,7 @@ from ui.images import CoverCache
 from ui.library_tab import LibraryTab
 from ui.quotes_tab import QuotesTab
 from ui.reader_tab import ReaderTab
+from ui.recommend_tab import RecommendTab
 from ui.sidebar import SidebarTabs
 from ui.stats_tab import StatsTab
 from ui.viewmodels import most_recent_unfinished
@@ -30,8 +31,8 @@ from ui.voices_tab import VoicesTab
 
 logger = logging.getLogger(__name__)
 
-TAB_READER, TAB_EXPLORE, TAB_LIBRARY, TAB_QUOTES, TAB_STATS, TAB_VOICES, TAB_ADMIN = (
-    "Phòng Đọc", "Khám Phá", "Kệ Sách Của Tôi", "Trích Dẫn Yêu Thích", "Thống Kê", "Kho Giọng Đọc", "Quản Trị")
+TAB_READER, TAB_EXPLORE, TAB_RECOMMEND, TAB_LIBRARY, TAB_QUOTES, TAB_STATS, TAB_VOICES, TAB_ADMIN = (
+    "Phòng Đọc", "Khám Phá", "Gợi Ý", "Kệ Sách Của Tôi", "Trích Dẫn Yêu Thích", "Thống Kê", "Kho Giọng Đọc", "Quản Trị")
 
 
 class _ListenerProxy:
@@ -91,11 +92,12 @@ class App(ctk.CTk):
         self.rowconfigure(0, weight=1)
         self.reader_tab = ReaderTab(self.tabs.add(TAB_READER, "🎧"), self.ctx)
         self.explore_tab = ExploreTab(self.tabs.add(TAB_EXPLORE, "🧭"), self.ctx)
+        self.recommend_tab = RecommendTab(self.tabs.add(TAB_RECOMMEND, "✨"), self.ctx)
         self.library_tab = LibraryTab(self.tabs.add(TAB_LIBRARY, "📚"), self.ctx)
         self.quotes_tab = QuotesTab(self.tabs.add(TAB_QUOTES, "⭐"), self.ctx)
         self.stats_tab = StatsTab(self.tabs.add(TAB_STATS, "📊"), self.ctx)
         self.voices_tab = VoicesTab(self.tabs.add(TAB_VOICES, "🎙"), self.ctx)
-        screens = [self.reader_tab, self.explore_tab, self.library_tab, self.quotes_tab, self.stats_tab, self.voices_tab]
+        screens = [self.reader_tab, self.explore_tab, self.recommend_tab, self.library_tab, self.quotes_tab, self.stats_tab, self.voices_tab]
         self.admin_tab: AdminTab | None = None
         if self.user.get("role") == "admin":  # the screen does not exist for anyone else
             self.admin_tab = AdminTab(self.tabs.add(TAB_ADMIN, "🛡"), self.ctx)
@@ -210,6 +212,7 @@ class App(ctk.CTk):
         self.settings = settings
         self.ctx.reader.prefetch = int(settings["prefetch_count"])
         self.ctx.reader.chapter_chime = bool(settings.get("chapter_chime", True))
+        self.ctx.reader.character_voice = settings.get("character_voice") or None
         self.ctx.reader.ambient.configure(int(settings.get("ambient_track") or 0), float(settings.get("ambient_volume", 0.4)))
         self.reader_tab.refresh_ambient()
         if not self.ctx.reader.is_playing:
@@ -301,6 +304,8 @@ class App(ctk.CTk):
         current = self.tabs.get()
         if current == TAB_EXPLORE:
             self.explore_tab.refresh()
+        elif current == TAB_RECOMMEND:
+            self.recommend_tab.refresh()
         elif current == TAB_LIBRARY:
             self.library_tab.refresh()
         elif current == TAB_QUOTES:

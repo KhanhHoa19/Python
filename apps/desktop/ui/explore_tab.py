@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tkinter as tk
+from collections.abc import Callable
 from typing import Any
 
 import customtkinter as ctk
@@ -12,7 +13,41 @@ from ui.category_chips import CategoryChips
 from ui.common import AppContext, LatestRequest, error_text
 from ui.dialogs import UploadDialog
 from ui.images import CoverView
-from ui.viewmodels import EXPLORE_SORTS, format_number
+from ui.viewmodels import EXPLORE_SORTS, format_duration, format_number
+
+
+def book_card(parent: ctk.CTkFrame, ctx: AppContext, index: int, book: dict[str, Any],
+              on_listen: Callable[[dict[str, Any]], None], on_add: Callable[[dict[str, Any]], None]) -> None:
+    """A public book as a card (two per row): used by Khám phá and Gợi Ý. A book that carries `reasons` (Gợi Ý) also shows
+    why it was suggested and how long it takes."""
+    card = ctk.CTkFrame(parent, border_width=1, border_color=theme.BORDER, corner_radius=16)
+    card.grid(row=index // 2, column=index % 2, sticky="nsew", padx=6, pady=6)
+    card.columnconfigure(1, weight=1)
+    CoverView(card, ctx, book["title"], book.get("cover_url"), size=(78, 104)).grid(row=0, column=0, rowspan=2, padx=12, pady=12)
+    info = ctk.CTkFrame(card, fg_color="transparent")
+    info.grid(row=0, column=1, sticky="nsew", pady=(12, 0))
+    info.columnconfigure(0, weight=1)
+    category = (book.get("category") or {}).get("name")
+    if category:
+        ctk.CTkLabel(info, text=category.upper(), anchor="w", text_color=theme.ACCENT, font=theme.font(10, "bold")).pack(fill="x")
+    ctk.CTkLabel(info, text=book["title"], anchor="w", justify="left", wraplength=230, font=theme.font(14, "bold")).pack(fill="x")
+    author = book.get("author") if book.get("author") and book["author"] != "Unknown" else "Sách hệ thống"
+    ctk.CTkLabel(info, text=author, anchor="w", text_color=theme.MUTED, font=theme.font(12)).pack(fill="x")
+    meta = f"{format_number(book['total_chapters'])} chương · {format_number(book['total_words'])} từ"
+    if book.get("estimated_minutes"):
+        meta += f" · {format_duration(book['estimated_minutes'])}"
+    ctk.CTkLabel(info, text=meta, anchor="w", text_color=theme.MUTED, font=theme.font(11)).pack(fill="x")
+    for reason in book.get("reasons") or []:
+        ctk.CTkLabel(info, text=f"✦ {reason}", anchor="w", justify="left", wraplength=230, text_color=theme.ACCENT,
+                     font=theme.font(11)).pack(fill="x")
+    actions = ctk.CTkFrame(card, fg_color="transparent")
+    actions.grid(row=1, column=1, sticky="ew", pady=(0, 12))
+    ctk.CTkButton(actions, text="Nghe ngay", width=96, height=32, command=lambda: on_listen(book)).pack(side="left")
+    if book.get("on_shelf"):
+        ctk.CTkLabel(actions, text="✓ Trong kệ", text_color=theme.SUCCESS, font=theme.font(12, "bold")).pack(side="left", padx=10)
+    else:
+        ctk.CTkButton(actions, text="+ Thêm vào kệ", width=104, height=32, command=lambda: on_add(book),
+                      **theme.SECONDARY).pack(side="left", padx=(6, 0))
 
 
 class ExploreTab(ctk.CTkFrame):
@@ -100,30 +135,7 @@ class ExploreTab(ctk.CTkFrame):
     # -- one book -----------------------------------------------------------------------------------------
 
     def _card(self, index: int, book: dict[str, Any]) -> None:
-        card = ctk.CTkFrame(self.list, border_width=1, border_color=theme.BORDER, corner_radius=16)
-        card.grid(row=index // 2, column=index % 2, sticky="nsew", padx=6, pady=6)
-        card.columnconfigure(1, weight=1)
-        CoverView(card, self.ctx, book["title"], book.get("cover_url"), size=(78, 104)).grid(
-            row=0, column=0, rowspan=2, padx=12, pady=12)
-        info = ctk.CTkFrame(card, fg_color="transparent")
-        info.grid(row=0, column=1, sticky="nsew", pady=(12, 0))
-        info.columnconfigure(0, weight=1)
-        category = (book.get("category") or {}).get("name")
-        if category:
-            ctk.CTkLabel(info, text=category.upper(), anchor="w", text_color=theme.ACCENT, font=theme.font(10, "bold")).pack(fill="x")
-        ctk.CTkLabel(info, text=book["title"], anchor="w", justify="left", wraplength=230, font=theme.font(14, "bold")).pack(fill="x")
-        author = book.get("author") if book.get("author") and book["author"] != "Unknown" else "Sách hệ thống"
-        ctk.CTkLabel(info, text=author, anchor="w", text_color=theme.MUTED, font=theme.font(12)).pack(fill="x")
-        ctk.CTkLabel(info, text=f"{format_number(book['total_chapters'])} chương · {format_number(book['total_words'])} từ",
-                     anchor="w", text_color=theme.MUTED, font=theme.font(11)).pack(fill="x")
-        actions = ctk.CTkFrame(card, fg_color="transparent")
-        actions.grid(row=1, column=1, sticky="ew", pady=(0, 12))
-        ctk.CTkButton(actions, text="Nghe ngay", width=96, height=32, command=lambda: self._listen(book)).pack(side="left")
-        if book.get("on_shelf"):
-            ctk.CTkLabel(actions, text="✓ Trong kệ", text_color=theme.SUCCESS, font=theme.font(12, "bold")).pack(side="left", padx=10)
-        else:
-            ctk.CTkButton(actions, text="+ Thêm vào kệ", width=104, height=32, command=lambda: self._add(book),
-                          **theme.SECONDARY).pack(side="left", padx=(6, 0))
+        book_card(self.list, self.ctx, index, book, on_listen=self._listen, on_add=self._add)
 
     def _add(self, book: dict[str, Any], then_listen: bool = False) -> None:
         def done(_result: Any) -> None:

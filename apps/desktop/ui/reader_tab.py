@@ -22,6 +22,7 @@ from ui.viewmodels import EMOTIONS, describe_voice, format_number
 
 WINDOW_RADIUS = 60  # sentences rendered on each side of the current one
 _ADD_VOICE = "+ Thêm giọng mới…"
+_ONE_VOICE = "Một giọng (không phân vai)"
 _STATE_TEXT = {"playing": "● Đang phát", "paused": "❚❚ Tạm dừng", "stopped": "■ Đã dừng", "finished": "✔ Đã đọc xong"}
 
 
@@ -61,6 +62,11 @@ class ReaderTab(ctk.CTkFrame):
         ctk.CTkLabel(header, text="Giọng", text_color=theme.TEXT_2).grid(row=0, column=3, padx=(10, 4))
         self.voice_box = ctk.CTkComboBox(header, values=[""], width=260, state="readonly", command=self._voice_chosen)
         self.voice_box.grid(row=0, column=4)
+        ctk.CTkLabel(header, text="Giọng nhân vật", text_color=theme.TEXT_2).grid(row=1, column=3, padx=(10, 4), pady=(6, 0))
+        self.character_box = ctk.CTkComboBox(header, values=[_ONE_VOICE], width=260, state="readonly",
+                                             command=self._character_chosen)
+        self.character_box.set(_ONE_VOICE)
+        self.character_box.grid(row=1, column=4, pady=(6, 0))
 
         self.text = ctk.CTkTextbox(self, wrap="word", font=theme.font(17, serif=True), spacing3=8, border_spacing=12)
         self.text.grid(row=1, column=0, sticky="nsew", pady=4)
@@ -180,6 +186,28 @@ class ReaderTab(ctk.CTkFrame):
         self.voice_box.configure(values=labels)
         chosen = next((label for label, vid in self._voice_by_label.items() if vid == selected_id), None)
         self.voice_box.set(chosen or (labels[0] if self._voice_by_label else ""))
+        self.character_box.configure(values=[_ONE_VOICE] + list(self._voice_by_label))
+        self.show_character_voice()
+
+    def show_character_voice(self) -> None:
+        """Show the saved character voice (or "none") in its box."""
+        current = self.ctx.app.settings.get("character_voice") or ""
+        label = next((lbl for lbl, vid in self._voice_by_label.items() if vid == current), None)
+        self.character_box.set(label or _ONE_VOICE)
+
+    def _character_chosen(self, label: str) -> None:
+        voice = self._voice_by_label.get(label, "")
+        self.ctx.reader.set_character_voice(voice)  # takes effect at once, before the server has answered
+        settings = {**{k: self.ctx.app.settings[k] for k in ("prefetch_count", "default_speed", "default_voice", "daily_char_limit")},
+                    "character_voice": voice}
+
+        def saved(result: dict[str, Any]) -> None:
+            self.ctx.app.apply_settings(result)
+            self.ctx.app.toast("Đã bật đọc phân vai: lời thoại trong ngoặc kép đọc bằng giọng nhân vật." if voice
+                               else "Đã tắt đọc phân vai.")
+
+        self.ctx.ui.run_in_thread(lambda: self.ctx.api.update_settings(settings), saved,
+                                  lambda exc: self.ctx.app.show_error(error_text(exc)))
 
     def set_speed_label(self, speed: float) -> None:
         self.speed_buttons.set(f"{speed}x")

@@ -134,6 +134,29 @@ def sort_system_books(books: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(books, key=lambda b: (not b.get("is_public"), normalize_text(b.get("title", ""))))
 
 
+# Gợi Ý (S12): same options as apps/web/src/lib/recommend.ts
+DURATION_OPTIONS = (("Bất kỳ", None), ("≤ 15 phút", 15), ("≤ 30 phút", 30), ("≤ 1 giờ", 60), ("≤ 3 giờ", 180))
+
+
+def format_duration(minutes: int) -> str:
+    """"~25 phút", "~1 giờ", "~2 giờ 5 phút"."""
+    if minutes < 60:
+        return f"~{max(1, minutes)} phút"
+    hours, rest = divmod(minutes, 60)
+    return f"~{hours} giờ" if rest == 0 else f"~{hours} giờ {rest} phút"
+
+
+def toggle_slug(chosen: list[str], slug: str) -> list[str]:
+    """Add the slug if missing, remove it if present (the order of picking is kept)."""
+    return [s for s in chosen if s != slug] if slug in chosen else [*chosen, slug]
+
+
+def describe_filters(mood_label: str | None, duration_label: str, duration_minutes: int | None) -> str:
+    parts = [f"tâm trạng {mood_label.lower()}" if mood_label else "", duration_label if duration_minutes else ""]
+    parts = [p for p in parts if p]
+    return f"Đang lọc: {', '.join(parts)}" if parts else ""
+
+
 def usage_ratio(used: int, limit: int) -> float:
     """0..1 share of the daily character limit; 0 when unlimited."""
     return min(used / limit, 1.0) if limit > 0 else 0.0

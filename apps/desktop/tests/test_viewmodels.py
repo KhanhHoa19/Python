@@ -115,3 +115,20 @@ def test_admin_helpers() -> None:
     assert category_problem("Sử", "#A1B2c3") is None
     books = [{"title": "Zeta", "is_public": False}, {"title": "Đông", "is_public": True}, {"title": "An", "is_public": True}]
     assert [b["title"] for b in sort_system_books(books)] == ["An", "Đông", "Zeta"]
+
+
+def test_recommend_helpers() -> None:
+    from ui.viewmodels import (
+        DURATION_OPTIONS,
+        describe_filters,
+        format_duration,
+        toggle_slug,
+    )
+
+    assert toggle_slug(["a"], "b") == ["a", "b"] and toggle_slug(["a", "b"], "a") == ["b"]
+    assert [format_duration(m) for m in (0, 25, 60, 125)] == ["~1 phút", "~25 phút", "~1 giờ", "~2 giờ 5 phút"]
+    assert DURATION_OPTIONS[0][1] is None
+    limits = [m for _, m in DURATION_OPTIONS[1:]]
+    assert limits == sorted(limits)
+    assert describe_filters(None, "Bất kỳ", None) == ""
+    assert describe_filters("Hồi hộp", "≤ 30 phút", 30) == "Đang lọc: tâm trạng hồi hộp, ≤ 30 phút"

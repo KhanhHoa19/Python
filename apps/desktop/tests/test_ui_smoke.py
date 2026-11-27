@@ -443,3 +443,39 @@ def test_admin_tab_manages_the_ambient_library(fake_tk, admin_api, tmp_path) -> 
         application.ui.close()
         logging.getLogger().removeHandler(collector)
     assert not collector.messages, "\n".join(collector.messages)
+
+
+def test_recommend_tab_asks_first_then_filters_and_shelves(app, admin_api, tmp_path) -> None:
+    text = tmp_path / "khoa_hoc.txt"
+    text.write_text("Chương 1\n\nBầu trời có màu xanh vì ánh sáng bị tán xạ. Đó là một hiện tượng thú vị.", encoding="utf-8")
+    cats = {c["slug"]: c["id"] for c in admin_api.list_categories()}
+    admin_api.ingest_book(text, title="Vì sao trời xanh", category_id=cats["khoa-hoc"], is_public=True)
+
+    tab = app.recommend_tab
+    tab.refresh()
+    pump(app)
+    assert tab.data["onboarded"] is False and [b["title"] for b in tab.books] == ["Vì sao trời xanh"]  # the question is on screen
+    tab._toggle("khoa-hoc")
+    assert tab.picked == ["khoa-hoc"]
+    tab._save(skip=False)
+    pump(app)
+    assert tab.data["onboarded"] and tab.data["favorite_categories"] == ["khoa-hoc"] and not tab.editing
+    assert tab.books[0]["reasons"] and tab.books[0]["estimated_minutes"] >= 1
+
+    tab._edit()  # change the favourites later
+    assert tab.editing and tab.picked == ["khoa-hoc"]
+    tab._cancel_edit()
+    tab.mood_box.set("Hồi hộp")  # a mood with no matching book: empty list, not an error
+    tab._mood_chosen("Hồi hộp")
+    pump(app)
+    assert tab.mood == "hoi-hop" and tab.books == []
+    tab._mood_chosen("Hồi hộp")  # clicking it again clears the mood
+    pump(app)
+    assert tab.mood is None and len(tab.books) == 1
+    tab.duration_box.set("≤ 15 phút")
+    tab.refresh()
+    pump(app)
+    assert len(tab.books) == 1  # a two-sentence book fits any limit
+    tab._add(tab.books[0])
+    pump(app)
+    assert tab.books == []  # shelved: nothing left to suggest

@@ -763,8 +763,9 @@ class ExportDialog(ModalDialog):
         self.start_btn.configure(state="disabled")
         self.status.configure(text="Đang xuất…", text_color=theme.TEXT)
         voice = self.ctx.app.current_voice_id
+        character = self.ctx.app.settings.get("character_voice") or None  # the export is read by the same two voices
         self.ctx.ui.run_in_thread(
-            lambda: self.ctx.api.start_export(self.book["id"], start, end, voice),
+            lambda: self.ctx.api.start_export(self.book["id"], start, end, voice, character),
             self.guard(self._started), self.guard(self._start_failed))
 
     def _start_failed(self, exc: Exception) -> None:

@@ -256,3 +256,28 @@ def test_jumping_to_a_chapter_starts_playing_there(output: FakeOutput) -> None:
     controller.jump(3, autoplay=True)
     assert wait_for(lambda: "finished" in listener.states)
     assert listener.positions[0] == 3 and controller.index == 5
+
+
+def test_character_voice_is_sent_only_when_multi_voice_is_on(output: FakeOutput) -> None:
+    api = FakeApi(sentences=2)
+    sent: list[tuple] = []
+
+    def fetch(book_id, index, speed, voice, dialogue_voice=None):
+        sent.append((index, voice, dialogue_voice))
+        return b"x", "wav"
+
+    api.fetch_audio = fetch  # type: ignore[method-assign]
+    controller, listener = make(api, output)
+    controller.voice = "narrator"
+    controller.play(0)
+    assert wait_for(lambda: "finished" in listener.states, timeout=8)
+    assert [s[2] for s in sent] == [None, None]  # one voice: the server is not asked to split the sentence
+
+    sent.clear()
+    controller.set_character_voice("hero")
+    controller.play(0)
+    assert wait_for(lambda: len(sent) == 2, timeout=8)
+    assert {s[1:] for s in sent} == {("narrator", "hero")}
+    controller.set_character_voice("")  # "" switches it off again
+    assert controller.character_voice is None
+    controller.stop()

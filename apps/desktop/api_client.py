@@ -214,11 +214,14 @@ class ApiClient:
         return self._json("POST", "/api/sessions", json=payload)
 
     def fetch_audio(self, book_id: int, sentence_index: int, speed: float = 1.0,
-                    voice: str | None = None) -> tuple[bytes, str]:
-        """Return (audio_bytes, extension) for one sentence."""
+                    voice: str | None = None, dialogue_voice: str | None = None) -> tuple[bytes, str]:
+        """Return (audio_bytes, extension) for one sentence. With `dialogue_voice` the lines inside quotation marks
+        are read by that voice and the rest by `voice` (multi-voice narration)."""
         params: dict[str, Any] = {"speed": speed}
         if voice:
             params["voice"] = voice
+        if dialogue_voice:
+            params["dialogue_voice"] = dialogue_voice
         response = self._request(
             "GET", f"/api/audio/{book_id}/{sentence_index}", params=params,
             timeout=config.AUDIO_TIMEOUT_SECONDS,
@@ -282,6 +285,16 @@ class ApiClient:
     def preview_voice(self, voice_id: str) -> tuple[bytes, str]:
         response = self._request("GET", f"/api/voices/{voice_id}/preview", timeout=config.AUDIO_TIMEOUT_SECONDS)
         return response.content, _extension(response)
+
+    # -- recommendations ---------------------------------------------------------
+
+    def recommendations(self, mood: str | None = None, max_minutes: int | None = None) -> dict[str, Any]:
+        params = {k: v for k, v in (("mood", mood), ("max_minutes", max_minutes)) if v is not None}
+        return self._json("GET", "/api/recommendations", params=params or None)
+
+    def save_preferences(self, favorite_categories: list[str], onboarded: bool = True) -> dict[str, Any]:
+        return self._json("PUT", "/api/recommendations/preferences",
+                          json={"favorite_categories": favorite_categories, "onboarded": onboarded})
 
     # -- background sounds -------------------------------------------------------
 
@@ -349,8 +362,10 @@ class ApiClient:
         return self._json("GET", f"/api/books/{book_id}/export/estimate", params=params, timeout=60)
 
     def start_export(self, book_id: int, from_index: int = 0, to_index: int | None = None,
-                     voice: str | None = None) -> dict[str, Any]:
+                     voice: str | None = None, dialogue_voice: str | None = None) -> dict[str, Any]:
         body: dict[str, Any] = {"from_index": from_index}
+        if dialogue_voice:
+            body["dialogue_voice"] = dialogue_voice
         if to_index is not None:
             body["to_index"] = to_index
         if voice:

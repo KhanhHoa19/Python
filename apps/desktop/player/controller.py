@@ -47,6 +47,7 @@ class ReaderController:
         self.book: OpenBook | None = None
         self.index = 0
         self.voice: str | None = None
+        self.character_voice: str | None = None  # reads the dialogue in quotation marks; None = the narrator reads everything
         self.saved_voice: str | None = None  # voice remembered in the open book's bookmark
         self.speed = 1.0
         self.prefetch = 2
@@ -188,6 +189,15 @@ class ReaderController:
         if self.is_playing or self.is_paused:
             self.play(self.index)
 
+    def set_character_voice(self, voice: str | None) -> None:
+        """Multi-voice narration on (a voice) or off (None); a change restarts the sentence being read."""
+        voice = voice or None
+        if voice == self.character_voice:
+            return
+        self.character_voice = voice
+        if self.is_playing or self.is_paused:
+            self.play(self.index)
+
     # -- sleep timer ---------------------------------------------------------------------------
 
     def _stop_point(self, index: int) -> int | None:
@@ -261,6 +271,8 @@ class ReaderController:
 
     def _fetch(self, index: int) -> tuple[bytes, str]:
         assert self.book is not None
+        if self.character_voice:
+            return self.api.fetch_audio(self.book.book_id, index, self.speed, self.voice, self.character_voice)
         return self.api.fetch_audio(self.book.book_id, index, self.speed, self.voice)
 
     def _on_start(self, index: int) -> None:

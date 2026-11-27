@@ -294,3 +294,46 @@ def test_admin_api_and_voice_studio(api: ApiClient, admin_api: ApiClient, tmp_pa
 
     users = {u["username"]: u for u in admin_api.admin_users()}
     assert users["tester"]["role"] == "user" and users["admin"]["voice_count"] == 1
+
+
+def test_two_voices_end_to_end(api: ApiClient, tmp_path) -> None:
+    """The client asks for a dialogue voice, the real backend splits and joins the sentence."""
+    import wave
+
+    text = tmp_path / "doi_thoai.txt"
+    text.write_text('Cô ấy nói rất nhỏ: "Ừ." Trời mưa.', encoding="utf-8")
+    book = api.ingest_book(text, title="Đối thoại")
+    voices = [v["voice_id"] for v in api.list_voices()["voices"]]
+    narrator, character = voices[0], voices[1]
+    one, _ = api.fetch_audio(book["book_id"], 0, 1.0, narrator)
+    two, ext = api.fetch_audio(book["book_id"], 0, 1.0, narrator, character)
+    assert ext == "wav" and two[:4] == b"RIFF"
+
+    def seconds(data: bytes) -> float:
+        import io
+
+        with wave.open(io.BytesIO(data), "rb") as wav:
+            return wav.getnframes() / wav.getframerate()
+
+    # Mock audio is as long as the word count, so the joined file is as long as the single-voice one; which voice
+    # spoke which piece is proved in the backend tests. Here: the client's request works end to end.
+    assert abs(seconds(two) - seconds(one)) < 0.05 and seconds(two) > 2
+    assert api.update_settings({**api.get_settings(), "character_voice": character})["character_voice"] == character
+    job = api.start_export(book["book_id"], 0, 0, narrator, character)
+    assert job["status"] in ("running", "done")
+
+
+def test_recommendations_for_a_new_and_a_returning_reader(api: ApiClient, admin_api: ApiClient, tmp_path) -> None:
+    text = tmp_path / "trinh_tham.txt"
+    text.write_text("Chương 1\n\nMột vụ án bí ẩn xảy ra đêm qua. Thám tử bắt đầu điều tra.", encoding="utf-8")
+    cats = {c["slug"]: c["id"] for c in api.list_categories()}
+    admin_api.ingest_book(text, title="Vụ án bí ẩn", category_id=cats["trinh-tham"], is_public=True)
+
+    first = api.recommendations()
+    assert first["onboarded"] is False and first["has_history"] is False and len(first["moods"]) == 6
+    assert [b["title"] for b in first["items"]] == ["Vụ án bí ẩn"]
+    saved = api.save_preferences(["trinh-tham"])
+    assert saved["onboarded"] is True and saved["items"][0]["reasons"][0] == "Bạn đã chọn thích Trinh thám"
+    assert api.recommendations("hoi-hop")["items"] and api.recommendations("lang-man")["items"] == []
+    api.add_to_shelf(saved["items"][0]["id"])
+    assert api.recommendations()["items"] == []  # on the shelf now: nothing left to suggest

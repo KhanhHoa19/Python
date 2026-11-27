@@ -8,7 +8,7 @@ from pathlib import Path
 from sqlalchemy import Engine
 
 from src.core.ingestion.service import IngestionService
-from src.core.storage.repositories import SqlBookmarkRepository, SqlBookRepository
+from src.core.storage.repositories import SqlBookRepository
 
 
 def test_ingest_plain_text_file(test_engine: Engine):
@@ -26,10 +26,9 @@ def test_ingest_plain_text_file(test_engine: Engine):
 
     try:
         book_repo = SqlBookRepository(test_engine)
-        bookmark_repo = SqlBookmarkRepository(test_engine)
-        service = IngestionService(book_repo=book_repo, bookmark_repo=bookmark_repo)
+        service = IngestionService(book_repo=book_repo)
 
-        book = service.ingest_file(temp_path, title="A Tale of Two Chapters", author="Charles Dickens")
+        book = service.ingest_file(temp_path, title="A Tale of Two Chapters", author="Charles Dickens", owner_id=2)
         assert book.id is not None
         assert book.title == "A Tale of Two Chapters"
         assert book.author == "Charles Dickens"
@@ -47,14 +46,13 @@ def test_ingest_plain_text_file(test_engine: Engine):
         assert sentences[0].sentence_index == 0
         assert sentences[3].sentence_index == 3
 
-        # Verify initial bookmark created at sentence 0
-        bookmark = bookmark_repo.get_bookmark(book.id)
-        assert bookmark is not None
-        assert bookmark.current_sentence_index == 0
-        assert bookmark.completion_percentage == 0.0
+        assert db_book.owner_id == 2 and not db_book.is_public
 
-        # Duplicate ingestion check: re-ingesting identical content returns existing book
-        dup_book = service.ingest_file(temp_path, title="Duplicate Import")
+        # Duplicate ingestion check: the same owner re-ingesting identical content gets the existing book ...
+        dup_book = service.ingest_file(temp_path, title="Duplicate Import", owner_id=2)
         assert dup_book.id == book.id
+        # ... while another person importing the same file gets a book of their own.
+        other = service.ingest_file(temp_path, title="Same file, other reader", owner_id=1)
+        assert other.id != book.id and other.owner_id == 1
     finally:
         Path(temp_path).unlink(missing_ok=True)

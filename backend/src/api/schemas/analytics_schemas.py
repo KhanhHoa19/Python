@@ -22,6 +22,14 @@ class DailyStat(BaseModel):
     sessions: int
 
 
+class VoiceStat(BaseModel):
+    voice: str  # empty when the session was recorded without a voice
+    display_name: str
+    minutes: float
+    words: int
+    sessions: int
+
+
 class MetricsResponse(BaseModel):
     total_calls: int
     avg_latency_ms: float

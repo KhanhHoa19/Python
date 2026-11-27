@@ -13,6 +13,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
+from src.core.auth.users import cli_user_id
 from src.core.player.audio_player import AudioPlayer
 from src.core.player.buffer_manager import LookaheadBuffer
 from src.core.player.session_tracker import SessionTracker
@@ -54,7 +55,8 @@ def run_player_tui(
     """
     engine = get_db_engine()
     book_repo = SqlBookRepository(engine)
-    bookmark_repo = SqlBookmarkRepository(engine)
+    user_id = cli_user_id(engine)
+    bookmark_repo = SqlBookmarkRepository(engine, user_id)
 
     # 1. Fetch book metadata
     book = book_repo.get_by_id(book_id)
@@ -91,6 +93,7 @@ def run_player_tui(
     tracker = SessionTracker(
         book_id=book_id,
         total_sentences=total_sentences,
+        user_id=user_id,
         bookmark_repo=bookmark_repo,
     )
     from src.core.telemetry.collector import TelemetryCollector

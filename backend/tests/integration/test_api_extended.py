@@ -21,8 +21,7 @@ from src.core.network.diagnostics import CheckResult
 from src.core.storage.repositories import SqlBookRepository, SqlTelemetryRepository
 from src.core.tts.base import TTSProviderError
 from src.core.tts.mock_adapter import MockProvider
-
-ROUTE_MODULES = ["books", "player", "analytics", "voices", "notes", "settings", "export"]
+from tests.auth_helpers import TESTER_ID, sign_in, tester, use_engine, user_by_name
 
 
 class NoCloneProvider(MockProvider):
@@ -83,8 +82,7 @@ def client(
         monkeypatch.setenv(var, str(tmp_path / name))
     get_settings.cache_clear()
     with ExitStack() as stack:
-        for module in ROUTE_MODULES:
-            stack.enter_context(patch(f"src.api.routes.{module}.get_db_engine", return_value=test_engine))
+        stack.enter_context(use_engine(test_engine))
         for target in (
             "src.core.player.audio_service.TTSFactory",
             "src.api.routes.voices.TTSFactory",
@@ -93,8 +91,15 @@ def client(
         ):
             stack.enter_context(patch(target)).create_provider.return_value = provider
         with TestClient(create_app()) as test_client:
-            yield test_client
+            yield sign_in(test_client, test_engine, tester(test_engine))
     get_settings.cache_clear()
+
+
+@pytest.fixture
+def admin_client(client: TestClient, test_engine: Engine) -> Generator[TestClient, None, None]:
+    """A second client on the same app, signed in as the administrator."""
+    with TestClient(client.app) as other:
+        yield sign_in(other, test_engine, user_by_name(test_engine, "admin"))
 
 
 def add_book(engine: Engine, texts: list[str] | None = None) -> int:
@@ -106,7 +111,7 @@ def add_book(engine: Engine, texts: list[str] | None = None) -> int:
         )
         for i, t in enumerate(texts)
     ]
-    book = Book(
+    book = Book(owner_id=TESTER_ID,
         id=None, title="Sách Thử Nghiệm", author="A", source_path="x.txt", content_hash="f" * 64,
         total_chapters=1, total_sentences=len(texts), total_words=sum(s.word_count for s in sentences),
     )
@@ -121,6 +126,42 @@ def test_delete_book(client: TestClient, test_engine: Engine) -> None:
     assert client.delete(f"/api/books/{book_id}").status_code == 204
     assert client.get(f"/api/books/{book_id}").status_code == 404
     assert client.delete(f"/api/books/{book_id}").status_code == 404
+
+
+def test_rename_book_trims_and_persists(client: TestClient, test_engine: Engine) -> None:
+    book_id = add_book(test_engine)
+    resp = client.patch(f"/api/books/{book_id}", json={"title": "  Sherlock   Holmes \n tập một "})
+    assert resp.status_code == 200 and resp.json()["title"] == "Sherlock Holmes tập một"
+    assert client.get(f"/api/books/{book_id}").json()["title"] == "Sherlock Holmes tập một"
+    assert [b["title"] for b in client.get("/api/books").json()] == ["Sherlock Holmes tập một"]
+
+
+def test_rename_updates_the_title_shown_on_notes(client: TestClient, test_engine: Engine) -> None:
+    book_id = add_book(test_engine)
+    client.post("/api/notes", json={"book_id": book_id, "sentence_index": 0, "start_offset": 0, "end_offset": 3})
+    client.patch(f"/api/books/{book_id}", json={"title": "Tên mới"})
+    assert client.get("/api/notes").json()[0]["book_title"] == "Tên mới"
+
+
+@pytest.mark.parametrize("title", ["", "   ", "\n\t", "x" * 256])
+def test_rename_rejects_empty_or_too_long_titles(client: TestClient, test_engine: Engine, title: str) -> None:
+    book_id = add_book(test_engine)
+    resp = client.patch(f"/api/books/{book_id}", json={"title": title})
+    assert resp.status_code == 400
+    assert client.get(f"/api/books/{book_id}").json()["title"] == "Sách Thử Nghiệm"  # unchanged
+
+
+def test_rename_accepts_exactly_255_characters_and_keeps_vietnamese(client: TestClient, test_engine: Engine) -> None:
+    book_id = add_book(test_engine)
+    assert client.patch(f"/api/books/{book_id}", json={"title": "ế" * 255}).status_code == 200
+    assert client.patch(f"/api/books/{book_id}", json={"title": "Thung lũng khủng khiếp"}).json()["title"] == (
+        "Thung lũng khủng khiếp"
+    )
+
+
+def test_rename_unknown_book_and_missing_field(client: TestClient) -> None:
+    assert client.patch("/api/books/999", json={"title": "x"}).status_code == 404
+    assert client.patch("/api/books/1", json={}).status_code == 400
 
 
 def test_ingest_pdf_and_docx(client: TestClient) -> None:
@@ -206,6 +247,79 @@ def test_clone_voice_not_supported_returns_501(client: TestClient) -> None:
     assert resp.status_code == 501
 
 
+class LongSampleProvider(MockProvider):
+    @property
+    def clone_sample_seconds(self) -> tuple[float, float]:
+        return (5.0, 180.0)
+
+
+class DeleteFailsProvider(MockProvider):
+    def delete_voice(self, voice_id: str) -> None:
+        raise TTSProviderError("provider is down")
+
+
+class ListsItsClonesProvider(MockProvider):
+    """Like HeyGen: the provider's own voice list also contains the voices you cloned."""
+
+    def clone_voice(self, sample_path: str, name: str, language: str = "vi") -> str:
+        return "cloned-1"
+
+    def list_voices(self):  # type: ignore[no-untyped-def]
+        from src.core.tts.base import VoiceInfo
+
+        return [*super().list_voices(), VoiceInfo("cloned-1", "Giọng clone", "vi", None, "HeyGen")]
+
+
+def test_a_cloned_voice_is_listed_once_even_if_the_provider_lists_it_too(client: TestClient) -> None:
+    with patch("src.api.routes.voices.TTSFactory") as factory:
+        factory.create_provider.return_value = ListsItsClonesProvider()
+        before = client.get("/api/voices").json()["voices"]
+        assert [v["voice_id"] for v in before].count("cloned-1") == 1 and not before[-1]["is_custom"]
+        client.post("/api/voices/clone", data={"name": "Giọng clone", "consent": "true"},
+                    files={"sample": ("s.wav", io.BytesIO(make_wav(6)))})
+        after = client.get("/api/voices").json()["voices"]
+    entries = [v for v in after if v["voice_id"] == "cloned-1"]
+    assert len(entries) == 1 and entries[0]["is_custom"] and entries[0]["consent_at"]
+
+
+def test_bookmark_and_session_for_a_deleted_book_are_404_not_500(client: TestClient, test_engine: Engine) -> None:
+    book_id = add_book(test_engine)
+    assert client.delete(f"/api/books/{book_id}").status_code == 204
+    bookmark = {"book_id": book_id, "current_chapter": 1, "current_sentence_index": 0, "completion_percentage": 0}
+    assert client.post("/api/bookmarks", json=bookmark).status_code == 404
+    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    session = {"book_id": book_id, "start_time": now, "end_time": now, "duration_seconds": 5,
+               "sentences_read": 1, "words_read": 3}
+    assert client.post("/api/sessions", json=session).status_code == 404
+
+
+def test_voice_list_exposes_the_providers_sample_length_range(client: TestClient) -> None:
+    assert client.get("/api/voices").json()["clone_sample_seconds"] == [5.0, 15.0]
+    with patch("src.api.routes.voices.TTSFactory") as factory:
+        factory.create_provider.return_value = LongSampleProvider()
+        assert client.get("/api/voices").json()["clone_sample_seconds"] == [5.0, 180.0]
+
+
+def test_clone_accepts_a_longer_sample_when_the_provider_allows_it(client: TestClient) -> None:
+    files = {"sample": ("s.wav", io.BytesIO(make_wav(60)))}
+    with patch("src.api.routes.voices.TTSFactory") as factory:
+        factory.create_provider.return_value = LongSampleProvider()
+        resp = client.post("/api/voices/clone", data={"name": "Dài", "consent": "true"}, files=files)
+    assert resp.status_code == 201
+
+
+def test_deleting_a_voice_failing_at_the_provider_keeps_it(client: TestClient) -> None:
+    created = client.post(
+        "/api/voices/clone", data={"name": "Giữ lại", "consent": "true"},
+        files={"sample": ("s.wav", io.BytesIO(make_wav(6)))},
+    ).json()
+    with patch("src.api.routes.voices.TTSFactory") as factory:
+        factory.create_provider.return_value = DeleteFailsProvider()
+        resp = client.delete(f"/api/voices/{created['voice_id']}")
+    assert resp.status_code == 502 and "provider is down" in resp.json()["error"]
+    assert created["voice_id"] in [v["voice_id"] for v in client.get("/api/voices").json()["voices"]]
+
+
 def test_preview_voice_returns_audio(client: TestClient) -> None:
     resp = client.get("/api/voices/mock-vi-female/preview")
     assert resp.status_code == 200
@@ -247,14 +361,22 @@ def test_note_validation(client: TestClient, test_engine: Engine) -> None:
 # ---------------------------------------------------------------- settings / quota
 
 
-def test_settings_defaults_and_update(client: TestClient) -> None:
+def test_settings_defaults_and_update(client: TestClient, admin_client: TestClient) -> None:
     body = client.get("/api/settings").json()
     assert body["prefetch_count"] == 2 and body["daily_char_limit"] == 0 and body["provider"] == "mock"
 
     new = {"prefetch_count": 3, "default_speed": 1.25, "default_voice": "mock-vi-male", "daily_char_limit": 1000}
     updated = client.put("/api/settings", json=new).json()
     assert updated["prefetch_count"] == 3 and updated["default_voice"] == "mock-vi-male"
+    # The daily limit protects the shared TTS bill: an ordinary user's value is ignored ...
+    assert client.get("/api/settings").json()["daily_char_limit"] == 0
+    # ... but an admin sets it for everyone, and preferences stay personal.
+    assert admin_client.put("/api/settings", json=new).json()["daily_char_limit"] == 1000
     assert client.get("/api/settings").json()["daily_char_limit"] == 1000
+    assert admin_client.get("/api/settings").json()["prefetch_count"] == 3
+    other = {**new, "prefetch_count": 5}
+    client.put("/api/settings", json=other)
+    assert admin_client.get("/api/settings").json()["prefetch_count"] == 3  # not changed by someone else
 
 
 def test_settings_rejects_invalid_values(client: TestClient) -> None:
@@ -262,10 +384,12 @@ def test_settings_rejects_invalid_values(client: TestClient) -> None:
     assert client.put("/api/settings", json=bad).status_code == 400
 
 
-def test_daily_limit_blocks_new_synthesis_but_not_cached(client: TestClient, test_engine: Engine) -> None:
+def test_daily_limit_blocks_new_synthesis_but_not_cached(
+    client: TestClient, admin_client: TestClient, test_engine: Engine
+) -> None:
     book_id = add_book(test_engine, ["Câu một.", "Câu hai dài hơn nhiều."])
     settings = {"prefetch_count": 2, "default_speed": 1.0, "default_voice": "mock-vi-female", "daily_char_limit": 10}
-    client.put("/api/settings", json=settings)
+    admin_client.put("/api/settings", json=settings)
 
     assert client.get(f"/api/audio/{book_id}/0").status_code == 200  # 8 chars, fits
     assert client.get(f"/api/audio/{book_id}/0").status_code == 200  # cached, no quota use

@@ -69,7 +69,7 @@ def test_network_probe_probe_all() -> None:
 
 def test_telemetry_collector_buffering_and_flush(test_engine: Engine) -> None:
     """Test TelemetryCollector buffering metrics and flushing to repository."""
-    sess_repo = SqlSessionRepository(test_engine)
+    sess_repo = SqlSessionRepository(test_engine, 2)
     telem_repo = SqlTelemetryRepository(test_engine)
 
     # 1. Create a dummy session

@@ -6,7 +6,7 @@ import io
 import threading
 import uuid
 import wave
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from sqlalchemy import Engine
@@ -22,19 +22,21 @@ class ExportJob:
     job_id: str
     book_id: int
     total: int
+    user_id: int | None = None  # who started it; only they can follow, cancel or download it
     done: int = 0
-    status: str = "running"  # running | done | failed
+    status: str = "running"  # running | done | failed | cancelled
     error: str | None = None
     file_path: Path | None = None
     file_name: str = ""
+    cancel_requested: threading.Event = field(default_factory=threading.Event)
 
 
 _JOBS: dict[str, ExportJob] = {}
 _JOBS_LOCK = threading.Lock()
 
 
-def create_job(book_id: int, total: int) -> ExportJob:
-    job = ExportJob(job_id=uuid.uuid4().hex, book_id=book_id, total=total)
+def create_job(book_id: int, total: int, user_id: int | None = None) -> ExportJob:
+    job = ExportJob(job_id=uuid.uuid4().hex, book_id=book_id, total=total, user_id=user_id)
     with _JOBS_LOCK:
         _JOBS[job.job_id] = job
     return job
@@ -43,6 +45,12 @@ def create_job(book_id: int, total: int) -> ExportJob:
 def get_job(job_id: str) -> ExportJob | None:
     with _JOBS_LOCK:
         return _JOBS.get(job_id)
+
+
+def cancel_job(job: ExportJob) -> None:
+    """Ask a running export to stop after the sentence in progress. No effect once finished."""
+    if job.status == "running":
+        job.cancel_requested.set()
 
 
 def _concat_wav(paths: list[Path]) -> bytes:
@@ -81,10 +89,16 @@ def run_export(
     try:
         paths: list[Path] = []
         for sentence in sentences:
+            if job.cancel_requested.is_set():
+                job.status = "cancelled"
+                return
             path = _audio_with_retry(engine, job.book_id, sentence.text_content, voice, speed)
             paths.append(path)
             job.done += 1
 
+        if job.cancel_requested.is_set():
+            job.status = "cancelled"
+            return
         ext = paths[0].suffix.lstrip(".").lower() if paths else "wav"
         if fmt and fmt.lower() != ext:
             raise ValueError(f"Provider audio is '{ext}', cannot export as '{fmt.lower()}'.")

@@ -45,7 +45,7 @@ class _Engine:
 def test_daily_stats_accepts_decimal_sums() -> None:
     today = datetime.now(UTC).date().isoformat()
     engine = _Engine([(today, Decimal("120"), Decimal("40"), 2)])
-    days = SqlSessionRepository(engine).get_daily_stats(days=2)  # type: ignore[arg-type]
+    days = SqlSessionRepository(engine, 1).get_daily_stats(days=2)  # type: ignore[arg-type]
     assert days[-1] == {"date": today, "minutes": 2.0, "words": 40, "sessions": 2}
     assert isinstance(days[-1]["minutes"], float) and isinstance(days[-1]["words"], int)
 

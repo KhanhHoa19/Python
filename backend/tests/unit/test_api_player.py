@@ -13,16 +13,16 @@ from sqlalchemy import Engine
 from src.api.app import create_app
 from src.core.models.book import Book, BookSentence
 from src.core.storage.repositories import SqlBookRepository
+from tests.auth_helpers import TESTER_ID, sign_in, tester, use_engine
 
 
 @pytest.fixture
 def app_client(test_engine: Engine) -> Generator[TestClient, None, None]:
     """Create FastAPI test client with in-memory database engine."""
-    with patch("src.api.routes.player.get_db_engine", return_value=test_engine), \
-         patch("src.api.routes.books.get_db_engine", return_value=test_engine):
+    with use_engine(test_engine):
         app = create_app()
         with TestClient(app) as client:
-            yield client
+            yield sign_in(client, test_engine, tester(test_engine))
 
 
 def test_audio_stream_missing_book(app_client: TestClient) -> None:
@@ -40,7 +40,7 @@ def test_audio_stream_invalid_speed(app_client: TestClient) -> None:
 def test_audio_stream_success(app_client: TestClient, test_engine: Engine, tmp_path: Path) -> None:
     """Test successful audio synthesis streaming."""
     book_repo = SqlBookRepository(test_engine)
-    book = Book(
+    book = Book(owner_id=TESTER_ID,
         id=None,
         title="Test Book",
         author="Author",

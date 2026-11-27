@@ -27,7 +27,7 @@ class ExportEstimateResponse(BaseModel):
 
 class ExportJobResponse(BaseModel):
     job_id: str
-    status: Literal["running", "done", "failed"]
+    status: Literal["running", "done", "failed", "cancelled"]
     done: int
     total: int
     file_name: str | None = None

@@ -88,6 +88,21 @@ class TTSProvider(ABC):
         """Create a custom voice from a sample file and return its voice_id."""
         raise TTSProviderError(f"Provider '{self.provider_name}' does not support voice cloning.")
 
+    @property
+    def cache_namespace(self) -> str:
+        """Part of the audio cache key. Override when one provider has several models, so audio from
+        one model is never served for another."""
+        return self.provider_name
+
+    @property
+    def clone_sample_seconds(self) -> tuple[float, float]:
+        """(min, max) length in seconds the provider accepts for a cloning sample."""
+        return (5.0, 15.0)
+
+    def delete_voice(self, voice_id: str) -> None:
+        """Remove a custom voice at the provider (no-op for providers that keep nothing)."""
+        return None
+
     def verify(self) -> None:
         """Check credentials and connectivity by synthesizing a very short sentence.
 

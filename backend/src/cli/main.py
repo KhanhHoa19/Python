@@ -54,10 +54,15 @@ def create_parser() -> argparse.ArgumentParser:
 
 def handle_ingest(args: argparse.Namespace) -> int:
     """Execute book ingestion."""
+    from src.core.auth.users import cli_user_id
     from src.core.ingestion.service import IngestionService
+    from src.core.storage.db import get_db_engine
+
     service = IngestionService()
     try:
-        book = service.ingest_file(args.file_path, title=args.title, author=args.author)
+        book = service.ingest_file(
+            args.file_path, title=args.title, author=args.author, owner_id=cli_user_id(get_db_engine())
+        )
         if args.json:
             print(json.dumps({
                 "status": "success",
@@ -86,12 +91,14 @@ def handle_list(args: argparse.Namespace) -> int:
     """List cataloged books."""
     from rich.table import Table
 
+    from src.core.auth.users import cli_user_id
     from src.core.storage.db import get_db_engine
     from src.core.storage.repositories import SqlBookRepository
 
-    repo = SqlBookRepository(get_db_engine())
+    engine = get_db_engine()
+    repo = SqlBookRepository(engine)
     try:
-        books = repo.list_books(limit=args.limit, offset=args.offset)
+        books = repo.list_books(limit=args.limit, offset=args.offset, user_id=cli_user_id(engine))
         if args.json:
             data = []
             for b in books:

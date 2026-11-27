@@ -26,6 +26,7 @@ class ReadingSession:
     words_read: int = 0
     id: int | None = None
     created_at: datetime | None = None
+    voice: str | None = None
 
     def __post_init__(self) -> None:
         if self.duration_seconds < 0:

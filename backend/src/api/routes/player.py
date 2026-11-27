@@ -6,9 +6,10 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
+from src.api.deps import check_voice_access, current_user, visible_book
 from src.api.schemas.player_schemas import (
     BookmarkResponse,
     BookmarkUpdateRequest,
@@ -16,6 +17,7 @@ from src.api.schemas.player_schemas import (
     ReadingSessionResponse,
 )
 from src.core.app_settings import load_app_settings
+from src.core.auth.users import User
 from src.core.models.session import ReadingSession
 from src.core.player.audio_service import QuotaExceededError, get_or_create_audio
 from src.core.storage.db import get_db_engine
@@ -24,6 +26,7 @@ from src.core.storage.repositories import (
     SqlBookRepository,
     SqlSessionRepository,
     SqlSettingsRepository,
+    SqlUserSettingsRepository,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,15 +44,17 @@ def _media_type(path: Path) -> str:
 
 @router.get("/audio/{book_id}/{sentence_index}")
 def stream_sentence_audio(
-    book_id: int, sentence_index: int, speed: float = 1.0, voice: str | None = None
+    book_id: int, sentence_index: int, speed: float = 1.0, voice: str | None = None,
+    user: User = Depends(current_user),
 ) -> FileResponse:
     """Stream synthesized MP3 audio for an indexed sentence."""
     if speed < 0.5 or speed > 3.0:
         raise HTTPException(400, "Speed must be between 0.5 and 3.0")
 
-    book_repo = SqlBookRepository(get_db_engine())
-    if not book_repo.get_book(book_id):
-        raise HTTPException(404, f"Book ID {book_id} not found")
+    engine = get_db_engine()
+    visible_book(engine, book_id, user)
+    check_voice_access(engine, voice, user)
+    book_repo = SqlBookRepository(engine)
 
     sentence = next(
         (s for s in book_repo.get_book_sentences(book_id) if s.sentence_index == sentence_index),
@@ -58,7 +63,9 @@ def stream_sentence_audio(
     if not sentence:
         raise HTTPException(404, f"Sentence {sentence_index} not found for book {book_id}")
 
-    voice_name = voice or load_app_settings(SqlSettingsRepository(get_db_engine())).default_voice
+    voice_name = voice or load_app_settings(
+        SqlSettingsRepository(engine), SqlUserSettingsRepository(engine, user.id)
+    ).default_voice
     try:
         path, _ = get_or_create_audio(
             get_db_engine(), book_id, sentence.text_content, voice_name, speed
@@ -72,9 +79,11 @@ def stream_sentence_audio(
 
 
 @router.get("/bookmarks/{book_id}", response_model=BookmarkResponse)
-def get_bookmark(book_id: int) -> BookmarkResponse:
-    """Retrieve saved bookmark for a book."""
-    bookmark = SqlBookmarkRepository(get_db_engine()).get_bookmark(book_id)
+def get_bookmark(book_id: int, user: User = Depends(current_user)) -> BookmarkResponse:
+    """This user's saved position in a book (the start if they never opened it)."""
+    engine = get_db_engine()
+    visible_book(engine, book_id, user)
+    bookmark = SqlBookmarkRepository(engine, user.id).get_bookmark(book_id)
     if not bookmark:
         return BookmarkResponse(
             book_id=book_id,
@@ -94,25 +103,32 @@ def get_bookmark(book_id: int) -> BookmarkResponse:
         current_sentence_index=bookmark.current_sentence_index,
         completion_percentage=bookmark.completion_percentage,
         last_read_at=last_read_str,
+        voice=bookmark.voice,
     )
 
 
 @router.post("/bookmarks")
-def update_bookmark(req: BookmarkUpdateRequest) -> dict[str, str]:
-    """Update bookmark reading position."""
-    SqlBookmarkRepository(get_db_engine()).update_bookmark(
+def update_bookmark(req: BookmarkUpdateRequest, user: User = Depends(current_user)) -> dict[str, str]:
+    """Update this user's reading position."""
+    engine = get_db_engine()
+    visible_book(engine, req.book_id, user)  # 404 also when the book was deleted while still open elsewhere
+    check_voice_access(engine, req.voice, user)
+    SqlBookmarkRepository(engine, user.id).update_bookmark(
         book_id=req.book_id,
         chapter_idx=req.current_chapter,
         sentence_idx=req.current_sentence_index,
         percentage=req.completion_percentage,
+        voice=req.voice,
     )
     return {"status": "updated"}
 
 
 @router.post("/sessions", status_code=201, response_model=ReadingSessionResponse)
-def record_session(req: ReadingSessionCreateRequest) -> ReadingSessionResponse:
-    """Record a completed reading session."""
-    session_repo = SqlSessionRepository(get_db_engine())
+def record_session(req: ReadingSessionCreateRequest, user: User = Depends(current_user)) -> ReadingSessionResponse:
+    """Record a completed reading session of this user."""
+    engine = get_db_engine()
+    visible_book(engine, req.book_id, user)
+    session_repo = SqlSessionRepository(engine, user.id)
 
     session = ReadingSession(
         book_id=req.book_id,
@@ -121,6 +137,7 @@ def record_session(req: ReadingSessionCreateRequest) -> ReadingSessionResponse:
         duration_seconds=int(req.duration_seconds),
         sentences_read=req.sentences_read,
         words_read=req.words_read,
+        voice=req.voice,
     )
     session_id = session_repo.record_session(session)
 
@@ -130,5 +147,6 @@ def record_session(req: ReadingSessionCreateRequest) -> ReadingSessionResponse:
         duration_seconds=session.duration_seconds,
         sentences_read=session.sentences_read,
         words_read=session.words_read,
+        voice=session.voice,
         created_at=datetime.utcnow().isoformat(),
     )

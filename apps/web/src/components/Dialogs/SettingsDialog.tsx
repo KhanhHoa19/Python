@@ -92,14 +92,18 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
         <h4 className="section-title">Kết nối</h4>
         <p>Nhà cung cấp: <strong>{settings?.provider ?? '…'}</strong></p>
         <p className="muted">API Key đặt trong file .env phía backend, không nhập ở đây.</p>
-        <div><button type="button" className="btn-secondary" onClick={runChecks} disabled={checking}>Kiểm tra kết nối</button></div>
-        <ul className="check-list" aria-live="polite">
-          {CHECKS.map(([key, label]) => (
-            <li key={key} className={`check ${checks[key].state}`}>
-              <span aria-hidden="true">{ICONS[checks[key].state]}</span> {label} {checks[key].detail && <span className="muted">{checks[key].detail}</span>}
-            </li>
-          ))}
-        </ul>
+        {user.role === 'admin' && (
+          <>
+            <div><button type="button" className="btn-secondary" onClick={runChecks} disabled={checking}>Kiểm tra kết nối</button></div>
+            <ul className="check-list" aria-live="polite">
+              {CHECKS.map(([key, label]) => (
+                <li key={key} className={`check ${checks[key].state}`}>
+                  <span aria-hidden="true">{ICONS[checks[key].state]}</span> {label} {checks[key].detail && <span className="muted">{checks[key].detail}</span>}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
 
         <h4 className="section-title">Cài đặt đọc</h4>
         <div className="form-grid">

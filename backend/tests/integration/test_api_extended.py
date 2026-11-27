@@ -401,29 +401,36 @@ def test_daily_limit_blocks_new_synthesis_but_not_cached(
 # ---------------------------------------------------------------- health
 
 
-def test_network_health_skipped_for_offline_provider(client: TestClient) -> None:
-    body = client.get("/api/health/network").json()
+def test_connection_checks_are_for_administrators_only(client: TestClient, admin_client: TestClient) -> None:
+    assert client.get("/api/health/network").status_code == 403  # a member
+    assert client.post("/api/tts/verify").status_code == 403  # would spend a synthesis on the shared account
+    assert admin_client.get("/api/health/network").status_code == 200
+    assert admin_client.post("/api/tts/verify").status_code == 200
+
+
+def test_network_health_skipped_for_offline_provider(admin_client: TestClient) -> None:
+    body = admin_client.get("/api/health/network").json()
     assert body["skipped"] is True and body["checks"] == []
 
 
-def test_network_health_reports_checks(client: TestClient, provider: MockProvider) -> None:
+def test_network_health_reports_checks(admin_client: TestClient, provider: MockProvider) -> None:
     online = MockProvider()
     online.__class__ = type("Edge", (MockProvider,), {"provider_name": property(lambda self: "edge-tts")})
     fake = [CheckResult("dns", True, "ok"), CheckResult("port", False, "closed")]
     with patch("src.api.routes.health.TTSFactory") as factory, \
          patch("src.api.routes.health.run_network_checks", return_value=fake) as run:
         factory.create_provider.return_value = online
-        body = client.get("/api/health/network").json()
+        body = admin_client.get("/api/health/network").json()
     run.assert_called_once_with("speech.platform.bing.com")
     assert body["host"] == "speech.platform.bing.com"
     assert [c["ok"] for c in body["checks"]] == [True, False]
 
 
-def test_verify_tts_ok_and_failure(client: TestClient) -> None:
-    assert client.post("/api/tts/verify").json() == {"provider": "mock", "ok": True, "error": None}
+def test_verify_tts_ok_and_failure(admin_client: TestClient) -> None:
+    assert admin_client.post("/api/tts/verify").json() == {"provider": "mock", "ok": True, "error": None}
     with patch("src.api.routes.health.TTSFactory") as factory:
         factory.create_provider.return_value = FailingVerifyProvider()
-        body = client.post("/api/tts/verify").json()
+        body = admin_client.post("/api/tts/verify").json()
     assert body["ok"] is False and "invalid API key" in body["error"]
 
 

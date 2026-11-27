@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from src.api.deps import require_admin
 from src.api.schemas.health_schemas import NetworkCheck, NetworkHealthResponse, VerifyResponse
 from src.core.network.diagnostics import host_for_provider, run_network_checks
 from src.core.tts.base import TTSProviderError
 from src.core.tts.factory import TTSFactory
 
-router = APIRouter(tags=["health"])
+# Both checks speak for the SHARED TTS account (and one of them spends a synthesis): administrators only.
+router = APIRouter(tags=["health"], dependencies=[Depends(require_admin)])
 
 
 @router.get("/health/network", response_model=NetworkHealthResponse)

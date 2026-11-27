@@ -3,35 +3,53 @@
 Bộ mockup này là **hợp đồng giao diện chung** cho Web (React) và Desktop (CustomTkinter).
 Công nghệ khác nhau, nhưng **số màn hình, tên màn, chức năng, trạng thái và API phải khớp nhau**.
 
-## Danh sách màn hình (8 màn – cả hai client đều phải có đủ)
+## Danh sách màn hình (11 màn – cả hai client đều phải có đủ)
 
 | Mã | Màn hình | File | Loại | Nhóm tab |
 |----|----------|------|------|----------|
-| S01 | Thư viện tài liệu | [S01-library.md](S01-library.md) | Trang | Thư Viện & Ghi Chú |
+| S01 | Kệ sách của tôi | [S01-library.md](S01-library.md) | Trang | Kệ Sách Của Tôi |
 | S02 | Thêm tài liệu | [S02-upload-document.md](S02-upload-document.md) | Hộp thoại | Thư Viện & Ghi Chú |
 | S03 | Phòng Đọc (player) | [S03-reading-room.md](S03-reading-room.md) | Trang | Phòng Đọc |
-| S04 | Chọn giọng & Thêm giọng mới | [S04-voices.md](S04-voices.md) | Hộp thoại | Phòng Đọc |
+| S04 | Kho Giọng Đọc (+ hộp thoại Thêm giọng mới) | [S04-voices.md](S04-voices.md) | Trang | Kho Giọng Đọc |
 | S05 | Kiểm tra kết nối & Cài đặt | [S05-connection-settings.md](S05-connection-settings.md) | Hộp thoại | (menu ⚙) |
-| S06 | Ghi chú âm thanh | [S06-audio-notes.md](S06-audio-notes.md) | Trang | Thư Viện & Ghi Chú |
+| S06 | Trích dẫn yêu thích | [S06-audio-notes.md](S06-audio-notes.md) | Trang | Trích Dẫn Yêu Thích |
 | S07 | Xuất audio | [S07-export.md](S07-export.md) | Hộp thoại | Thư Viện & Ghi Chú |
 | S08 | Thống kê | [S08-statistics.md](S08-statistics.md) | Trang | Thống Kê |
+| S10 | Khám phá | [S10-explore.md](S10-explore.md) | Trang | Khám Phá |
+| S11 | Quản Trị (chỉ admin) | [S11-admin.md](S11-admin.md) | Trang | Quản Trị |
+| S09 | Đăng nhập & Đăng ký | [S09-login.md](S09-login.md) | Trang (ngoài sidebar) | – |
 
 ## Điều hướng chung
 
-Thanh điều hướng có **3 tab** + nút ⚙. Tên, thứ tự, biểu tượng giống nhau ở hai client.
+Thanh điều hướng là **sidebar dọc bên trái** (web ở màn hẹp ≤ 860 px: thanh dưới đáy). Tên, thứ tự, biểu tượng giống nhau ở hai client. Màu, chữ và thành phần theo [design system](../conventions/design.md).
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│ 🎧 Audiobook TTS   [ Phòng Đọc ] [ Thư Viện & Ghi Chú ] [ Thống Kê ]      ⚙ │
-└──────────────────────────────────────────────────────────────┘
+┌───────────────┬──────────────────────────────────────────┐
+│ ▣ Audiobook TTS│  Tiêu đề màn hình                  [hành động] │
+│ 🎧 Phòng Đọc   │                                          │
+│ 🧭 Khám Phá    │                                          │
+│ 📚 Kệ Sách Của Tôi │  Nội dung                          │
+│ ⭐ Trích Dẫn Yêu Thích │                                  │
+│ 📊 Thống Kê    │                                          │
+│ 🎙 Kho Giọng Đọc│                                         │
+│ 🛡 Quản Trị (admin)│                                      │
+│ CÔNG CỤ       │                                          │
+│ ⚙ Kết nối & Cài đặt │                                    │
+│ 🖥 Giao diện: Tự động │                                   │
+└───────────────┴──────────────────────────────────────────┘
 ```
 
 | Tab | Màn chính | Màn phụ |
 |-----|-----------|---------|
-| Phòng Đọc | S03 | S04 (mở từ ô chọn giọng) |
-| Thư Viện & Ghi Chú | S01 (có 2 mục con: *Tài liệu* / *Ghi chú*) | S02, S06, S07 |
+| Phòng Đọc | S03 | S04 (ô chọn giọng › `+ Thêm giọng mới…` chuyển sang màn Kho Giọng Đọc) |
+| Khám Phá | S10 | S02 (admin đăng sách hệ thống) |
+| Kệ Sách Của Tôi | S01 (4 tab theo trạng thái) | S02, S07 |
+| Trích Dẫn Yêu Thích | S06 | S03 (nút ⭐ / phím B lưu trích dẫn) |
 | Thống Kê | S08 | – |
-| ⚙ | S05 | – |
+| Công cụ › Kết nối & Cài đặt | S05 | – |
+| Kho Giọng Đọc | S04 (giọng hệ thống + giọng của tôi) | hộp thoại Thêm giọng mới, Đổi tên |
+| Quản Trị (chỉ `role=admin`) | S11 (sách hệ thống, thể loại, giọng hệ thống, người dùng) | – |
+| Công cụ › Giao diện | đổi Tự động / Sáng / Tối (lưu lại) | – |
 
 Mở app lần đầu: vào **Thư Viện** nếu chưa có tài liệu; nếu có tài liệu đọc dở thì vào **Phòng Đọc** và hiện nút *Tiếp tục đọc*.
 
@@ -49,7 +67,7 @@ Mở app lần đầu: vào **Thư Viện** nếu chưa có tài liệu; nếu c
 
 | Chức năng | Màn | API backend | Web | Desktop |
 |-----------|-----|-------------|-----|---------|
-| Danh sách / tìm / xóa tài liệu | S01 | `GET/DELETE /api/books` | Lưới thẻ | Danh sách bảng |
+| Danh sách / tìm / đổi tên / xóa tài liệu | S01 | `GET/PATCH/DELETE /api/books` | Lưới thẻ | Danh sách bảng |
 | Tải tài liệu lên | S02 | `POST /api/books/ingest` | Kéo thả / chọn file | Hộp thoại chọn file |
 | Phát / dừng / câu trước / sau / nhảy câu | S03 | `GET /api/audio/{book}/{idx}` | `<audio>` + prefetch | pygame + Producer/Consumer |
 | Đổi tốc độ | S03 | `GET /api/audio/...?speed=` | `playbackRate` hoặc `speed=` | gửi `speed=` |
@@ -59,7 +77,7 @@ Mở app lần đầu: vào **Thư Viện** nếu chưa có tài liệu; nếu c
 | Chọn giọng | S03, S04 | `GET /api/voices` *(mới)* | Dropdown | Dropdown |
 | Thêm giọng (clone) | S04 | `POST /api/voices/clone` *(mới)* | Form | Form |
 | Kiểm tra kết nối | S05 | `GET /api/health/network`, `POST /api/tts/verify` *(mới)* | ✔ | ✔ |
-| Ghi chú âm thanh | S03, S06 | `/api/notes` *(mới)* | `getSelection()` | bôi đen textbox |
+| Trích dẫn yêu thích | S03, S06 | `/api/notes` | `getSelection()` | bôi đen textbox |
 | Xuất audio | S07 | `POST /api/books/{id}/export` *(mới)* | Tải về | Lưu file |
 | Thống kê | S08 | `GET /api/analytics/...` | Chart.js | Matplotlib |
 

@@ -5,6 +5,10 @@ Common rules are imported below (Claude Code loads `@`-imported files automatica
 
 @docs/conventions/common.md
 
+## Giao diện (bắt buộc cho mọi màn hình mới)
+
+Mọi màn hình và chức năng có giao diện **phải bám design system** trong [docs/conventions/design.md](docs/conventions/design.md) (màu, chữ, khung sidebar, thành phần dùng chung, web và desktop giống nhau). Không dùng mã màu thô; dùng token.
+
 ## Per-domain style guides
 
 When working inside a specific layer or app, follow its dedicated convention guide:

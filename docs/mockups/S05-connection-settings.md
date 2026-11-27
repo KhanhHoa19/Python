@@ -39,4 +39,4 @@
 ## Tiêu chí hoàn thành
 - [ ] Năm dòng kiểm tra hiện đúng thứ tự và trạng thái.
 - [ ] API Key không xuất hiện ở giao diện, log hay phản hồi.
-- [ ] Giới hạn ký tự có hiệu lực thật ở backend.
+- [ ] Giới hạn ký tự có hiệu lực thật ở backend. Ô giới hạn dùng chung cho cả hệ thống: **chỉ admin sửa được** (Member thấy ô bị khóa, giá trị gửi lên bị backend bỏ qua). Giọng mặc định, tốc độ và số câu tải trước là của **riêng từng người**.

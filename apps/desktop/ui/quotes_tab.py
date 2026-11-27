@@ -10,7 +10,7 @@ import customtkinter as ctk
 
 from player.quote_playlist import QuotePlaylist
 from ui import theme
-from ui.common import AppContext, error_text
+from ui.common import AppContext, LatestRequest, error_text
 from ui.dialogs import EditNoteDialog
 from ui.viewmodels import EMOTIONS, emotion_label, format_datetime, matches_quote
 
@@ -23,6 +23,7 @@ class QuotesTab(ctk.CTkFrame):
         super().__init__(master, fg_color="transparent")
         self.ctx = ctx
         self.notes: list[dict[str, Any]] = []
+        self._requests = LatestRequest()
         self.books: dict[str, int] = {}
         self.book_id: int | None = None  # set from a book card ("Trích dẫn" button)
         self.shown: list[dict[str, Any]] = []
@@ -86,7 +87,9 @@ class QuotesTab(ctk.CTkFrame):
         def work() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
             return self.ctx.api.list_notes(book_id, tag), self.ctx.api.list_books()
 
-        self.ctx.ui.run_in_thread(work, self._loaded, lambda exc: self._message(error_text(exc), error=True))
+        token = self._requests.start()
+        self.ctx.ui.run_in_thread(work, self._requests.wrap(token, self._loaded),
+                                  self._requests.wrap(token, lambda exc: self._message(error_text(exc), error=True)))
 
     def _loaded(self, result: tuple[list[dict[str, Any]], list[dict[str, Any]]]) -> None:
         self.notes, books = result

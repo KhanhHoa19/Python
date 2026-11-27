@@ -47,7 +47,7 @@ def parse_iso(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return datetime.fromisoformat(value)
     except ValueError:
         return None
 
@@ -62,14 +62,14 @@ def format_minutes(minutes: float) -> str:
     """'12 giờ 40' for long durations, '35 phút' for short ones, '12 giây' under a minute."""
     if 0 < minutes < 1:
         return f"{max(1, round(minutes * 60))} giây"
-    total = int(round(minutes))
+    total = round(minutes)
     hours, mins = divmod(total, 60)
     return f"{hours} giờ {mins:02d}" if hours else f"{mins} phút"
 
 
 def format_number(value: float) -> str:
     """Thousands separated by dots: 96200 -> '96.200'."""
-    return f"{int(round(value)):,}".replace(",", ".")
+    return f"{round(value):,}".replace(",", ".")
 
 
 def progress_fraction(progress: dict[str, Any] | None) -> float:

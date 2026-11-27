@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from api_client import ApiError
 from conftest import FakeOutput, wait_for
+
+from api_client import ApiError
 from player.controller import ReaderController
 
 
@@ -176,7 +177,7 @@ def test_session_and_bookmark_carry_the_voice(output: FakeOutput) -> None:
 def test_changing_voice_ends_the_session_of_the_old_voice(output: FakeOutput) -> None:
     api = FakeApi(sentences=40)
     output.duration = 0.05
-    controller, listener = make(api, output)
+    controller, _ = make(api, output)
     controller.voice = "voice-a"
     controller.play()
     assert wait_for(lambda: len(output.played) >= 2)

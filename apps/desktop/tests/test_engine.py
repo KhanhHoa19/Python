@@ -5,8 +5,9 @@ from __future__ import annotations
 import threading
 import time
 
-from api_client import ApiError
 from conftest import FakeOutput, wait_for
+
+from api_client import ApiError
 from player.engine import EngineCallbacks, PlaybackEngine
 
 

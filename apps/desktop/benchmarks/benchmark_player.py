@@ -31,6 +31,7 @@ from collections import deque
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
+from itertools import pairwise
 from pathlib import Path
 
 DESKTOP_DIR = Path(__file__).resolve().parents[1]
@@ -38,10 +39,11 @@ for extra in (DESKTOP_DIR, DESKTOP_DIR.parents[1] / "backend"):
     if str(extra) not in sys.path:
         sys.path.insert(0, str(extra))
 
-from api_client import ApiError  # noqa: E402
-from player.engine import EngineCallbacks, PlaybackEngine  # noqa: E402
-from src.core.tts.base import TTSProviderError  # noqa: E402
-from src.core.tts.mock_adapter import MockProvider  # noqa: E402
+from src.core.tts.base import TTSProviderError
+from src.core.tts.mock_adapter import MockProvider
+
+from api_client import ApiError
+from player.engine import EngineCallbacks, PlaybackEngine
 
 STALL_SECONDS = 0.3
 DEFAULT_SEC_PER_WORD = 0.28  # measured on the cloned voice (hayami: 0.40, so 0.28 is the harder case)
@@ -194,7 +196,7 @@ def run_once(
         raise RuntimeError(f"run did not finish within {budget:.0f}s: {scenario.name}, speed {speed}, N={prefetch}")
 
     order = sorted(starts)
-    gaps = [max(0.0, starts[b] - ends[a]) for a, b in zip(order, order[1:], strict=False) if a in ends]
+    gaps = [max(0.0, starts[b] - ends[a]) for a, b in pairwise(order) if a in ends]
     return RunResult(
         scenario=scenario.name, error_rate=error_rate, speed=speed, prefetch=prefetch, fetch_workers=fetch_workers,
         sentences=len(words), played=len(order), skipped=len(skipped),

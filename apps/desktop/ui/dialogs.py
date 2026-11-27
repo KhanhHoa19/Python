@@ -6,7 +6,7 @@ import tkinter as tk
 from collections.abc import Callable
 from pathlib import Path
 from tkinter import filedialog
-from typing import Any
+from typing import Any, ClassVar
 
 import customtkinter as ctk
 
@@ -315,7 +315,7 @@ class CloneVoiceDialog(ModalDialog):
 
 class SettingsDialog(ModalDialog):
     CHECKS = ("dns", "port", "latency", "synth")
-    CHECK_LABELS = {"dns": "DNS", "port": "Cổng 443", "latency": "Độ trễ mạng", "synth": "Thử đọc 1 câu"}
+    CHECK_LABELS: ClassVar[dict[str, str]] = {"dns": "DNS", "port": "Cổng 443", "latency": "Độ trễ mạng", "synth": "Thử đọc 1 câu"}
 
     def __init__(self, master: tk.Misc, ctx: AppContext):
         super().__init__(master, "Kết nối & Cài đặt", 560, 640)
@@ -331,6 +331,9 @@ class SettingsDialog(ModalDialog):
         self.check_btn.grid(row=3, column=0, padx=20, pady=8, sticky="w")
         grid = ctk.CTkFrame(self, fg_color="transparent")
         grid.grid(row=4, column=0, padx=20, sticky="ew")
+        if ctx.user.get("role") != "admin":  # the checks use the shared TTS account: administrators only
+            self.check_btn.grid_remove()
+            grid.grid_remove()
         grid.columnconfigure(1, weight=1)
         self.rows: dict[str, tuple[ctk.CTkLabel, ctk.CTkLabel]] = {}
         for i, key in enumerate(self.CHECKS):

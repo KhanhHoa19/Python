@@ -24,7 +24,7 @@ def test_ingest_list_sentences_and_delete(api: ApiClient, book: dict) -> None:
     assert book["total_sentences"] == 3
     assert [b["title"] for b in api.list_books()] == ["Bài học"]
     sentences = api.get_sentences(book["book_id"])
-    assert [s["text_content"] for s in sentences][0] == "Xin chào các bạn."
+    assert sentences[0]["text_content"] == "Xin chào các bạn."
     api.delete_book(book["book_id"])
     assert api.list_books() == []
     with pytest.raises(ApiError) as info:
@@ -184,10 +184,16 @@ def test_export_flow_and_download(api: ApiClient, book: dict, tmp_path) -> None:
     assert target.read_bytes()[:4] == b"RIFF"
 
 
-def test_health_and_analytics_shapes(api: ApiClient) -> None:
+def test_health_and_analytics_shapes(api: ApiClient, admin_api: ApiClient) -> None:
+    from api_client import ApiError
+
     assert api.health()["status"] == "ok"
-    assert api.network_health()["skipped"] is True
-    assert api.verify_tts()["ok"] is True
+    for call in (api.network_health, api.verify_tts):  # the shared TTS account: administrators only
+        with pytest.raises(ApiError) as denied:
+            call()
+        assert denied.value.status == 403
+    assert admin_api.network_health()["skipped"] is True
+    assert admin_api.verify_tts()["ok"] is True
     daily = api.analytics_daily(7)
     assert len(daily) == 7 and {"date", "minutes", "words", "sessions"} <= set(daily[0])
     assert {"avg_latency_ms", "p95_latency_ms", "success_rate", "words_per_minute"} <= set(api.analytics_metrics(7))

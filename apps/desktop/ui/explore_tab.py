@@ -9,7 +9,7 @@ import customtkinter as ctk
 
 from ui import theme
 from ui.category_chips import CategoryChips
-from ui.common import AppContext, error_text
+from ui.common import AppContext, LatestRequest, error_text
 from ui.dialogs import UploadDialog
 from ui.images import CoverView
 from ui.viewmodels import EXPLORE_SORTS, format_number
@@ -21,6 +21,7 @@ class ExploreTab(ctk.CTkFrame):
         self.ctx = ctx
         self.books: list[dict[str, Any]] = []
         self._search_job: str | None = None
+        self._requests = LatestRequest()
         self.columnconfigure(0, weight=1)
         self.rowconfigure(3, weight=1)
 
@@ -67,8 +68,10 @@ class ExploreTab(ctk.CTkFrame):
         self._message("Đang tải…")
         query, category = self.search.get(), self.ctx.app.category
         sort = next((key for key, label in EXPLORE_SORTS if label == self.sort_box.get()), "newest")
-        self.ctx.ui.run_in_thread(lambda: self.ctx.api.explore_books(query, category, sort), self._loaded,
-                                  lambda exc: self._message(error_text(exc), error=True))
+        token = self._requests.start()
+        self.ctx.ui.run_in_thread(lambda: self.ctx.api.explore_books(query, category, sort),
+                                  self._requests.wrap(token, self._loaded),
+                                  self._requests.wrap(token, lambda exc: self._message(error_text(exc), error=True)))
 
     def _loaded(self, books: list[dict[str, Any]]) -> None:
         self.books = books

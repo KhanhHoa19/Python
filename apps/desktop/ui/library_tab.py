@@ -10,7 +10,7 @@ import customtkinter as ctk
 
 from ui import theme
 from ui.category_chips import CategoryChips
-from ui.common import AppContext, error_text
+from ui.common import AppContext, LatestRequest, error_text
 from ui.dialogs import EditBookDialog, ExportDialog, UploadDialog
 from ui.images import CoverView
 from ui.viewmodels import (
@@ -33,6 +33,7 @@ class LibraryTab(ctk.CTkFrame):
         self.counts: dict[str, int] = {}
         self.tab: str | None = None  # a key of SHELF_TABS; None until the first counts pick one
         self._search_job: str | None = None
+        self._requests = LatestRequest()
         self.columnconfigure(0, weight=1)
         self.rowconfigure(4, weight=1)
 
@@ -98,7 +99,9 @@ class LibraryTab(ctk.CTkFrame):
             return {"tab": chosen, "counts": counts, "books": api.list_books(status=chosen, **filters),
                     "shelf": api.list_books() if need_resume else None}
 
-        self.ctx.ui.run_in_thread(work, self._loaded, lambda exc: self._show_message(error_text(exc), error=True))
+        token = self._requests.start()
+        self.ctx.ui.run_in_thread(work, self._requests.wrap(token, self._loaded),
+                                  self._requests.wrap(token, lambda exc: self._show_message(error_text(exc), error=True)))
 
     def _loaded(self, result: dict[str, Any]) -> None:
         self.tab, self.counts = result["tab"], result["counts"]

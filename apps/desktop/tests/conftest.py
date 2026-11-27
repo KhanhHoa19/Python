@@ -12,6 +12,12 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolated_config_dir(tmp_path, monkeypatch):
+    """Tests must never read or write the user's real saved appearance."""
+    monkeypatch.setenv("AUDIOBOOK_TTS_CONFIG_DIR", str(tmp_path / "config"))
+
+
 class FakeOutput:
     """Pretends to play each sound for `duration` seconds; records what was played."""
 
@@ -20,6 +26,8 @@ class FakeOutput:
         self.played: list[bytes] = []
         self.stops = 0
         self.paused = False
+        self.volume = 1.0
+        self.volume_history: list[float] = []
         self._busy_until = 0.0
         self._lock = threading.Lock()
 
@@ -29,9 +37,35 @@ class FakeOutput:
             self._busy_until = time.monotonic() + self.duration
         return self.duration
 
+    # -- background sound (a second channel) --------------------------------------------------------
+    ambient: dict | None = None  # {"data", "volume", "playing"} of the sound loaded now, or None
+
+    def play_ambient(self, data: bytes, ext: str, volume: float) -> None:
+        self.ambient = {"data": data, "volume": volume, "playing": True}
+
+    def set_ambient_volume(self, volume: float) -> None:
+        if self.ambient:
+            self.ambient["volume"] = volume
+
+    def pause_ambient(self) -> None:
+        if self.ambient:
+            self.ambient["playing"] = False
+
+    def resume_ambient(self) -> None:
+        if self.ambient:
+            self.ambient["playing"] = True
+
+    def stop_ambient(self) -> None:
+        self.ambient = None
+
     def is_busy(self) -> bool:
         with self._lock:
             return self.paused or time.monotonic() < self._busy_until
+
+    def set_volume(self, volume: float) -> None:
+        with self._lock:
+            self.volume = volume
+            self.volume_history.append(volume)
 
     def pause(self) -> None:
         with self._lock:
@@ -93,6 +127,7 @@ def backend(tmp_path, monkeypatch):
         "DB_USE_SQLITE": "true", "SQLITE_PATH": str(tmp_path / "db.sqlite"), "TTS_PROVIDER": "mock",
         "AUDIO_CACHE_DIR": str(tmp_path / "cache"), "EXPORT_DIR": str(tmp_path / "exports"),
         "VOICE_SAMPLES_DIR": str(tmp_path / "samples"), "TESTING": "false", "MOCK_TTS": "false",
+        "ADMIN_USERNAME": "admin", "ADMIN_PASSWORD": "admin-pass-123", "JWT_SECRET": "desktop-test-secret-" * 3,
     }.items():
         monkeypatch.setenv(key, value)
     monkeypatch.syspath_prepend(str(BACKEND_DIR))
@@ -119,6 +154,22 @@ def api(backend):
 
     client = ApiClient(base_url="http://backend")
     client._http = TestClient(backend, base_url="http://backend")
+    # Every endpoint needs an account: register one and sign in, as the desktop app does.
+    signed_in = client.register("tester", "correct horse", "Người Thử")
+    client.set_token(signed_in["access_token"])
+    return client
+
+
+@pytest.fixture
+def admin_api(backend):
+    """A second client on the same backend, signed in as the administrator."""
+    from fastapi.testclient import TestClient
+
+    from api_client import ApiClient
+
+    client = ApiClient(base_url="http://backend")
+    client._http = TestClient(backend, base_url="http://backend")
+    client.set_token(client.login("admin", "admin-pass-123")["access_token"])
     return client
 
 

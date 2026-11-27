@@ -8,9 +8,17 @@ from typing import Any
 import customtkinter as ctk
 
 import config
-from ui.common import AppContext
-from ui.dialogs import BookPickerDialog, NoteDialog
-from ui.viewmodels import describe_voice, format_number
+from player.chapters import chapter_at
+from ui import theme
+from ui.common import AppContext, error_text
+from ui.dialogs import (
+    AmbientDialog,
+    BookPickerDialog,
+    ChapterListDialog,
+    NoteDialog,
+    SleepTimerDialog,
+)
+from ui.viewmodels import EMOTIONS, describe_voice, format_number
 
 WINDOW_RADIUS = 60  # sentences rendered on each side of the current one
 _ADD_VOICE = "+ Thêm giọng mới…"
@@ -30,70 +38,112 @@ class ReaderTab(ctk.CTkFrame):
         self.rowconfigure(1, weight=1)
         self._build()
         self.after(500, self._tick_status)
+        self.after(250, self._tick_sleep)
 
     # -- layout -------------------------------------------------------------------------------
 
     def _build(self) -> None:
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         header.columnconfigure(0, weight=1)
-        self.title_label = ctk.CTkLabel(header, text="Chưa chọn tài liệu", anchor="w",
-                                        font=ctk.CTkFont(size=16, weight="bold"))
-        self.title_label.grid(row=0, column=0, sticky="ew")
-        ctk.CTkButton(header, text="Đổi tài liệu", width=110, command=self._pick_book).grid(row=0, column=1, padx=6)
-        ctk.CTkLabel(header, text="Giọng:").grid(row=0, column=2, padx=(10, 4))
+        title_box = ctk.CTkFrame(header, fg_color="transparent")
+        title_box.grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(title_box, text="ĐANG ĐỌC", anchor="w", text_color=theme.ACCENT,
+                     font=theme.font(11, "bold")).pack(anchor="w")
+        self.title_label = ctk.CTkLabel(title_box, text="Chưa chọn tài liệu", anchor="w",
+                                        font=theme.font(24, "bold", serif=True))
+        self.title_label.pack(anchor="w")
+        self.toc_btn = ctk.CTkButton(header, text="☰ Mục lục", width=100, command=self._open_toc, **theme.SECONDARY)
+        self.toc_btn.grid(row=0, column=1, padx=(0, 6))
+        self.toc_btn.grid_remove()  # shown only for books with more than one chapter
+        ctk.CTkButton(header, text="Đổi tài liệu", width=110, command=self._pick_book,
+                      **theme.SECONDARY).grid(row=0, column=2, padx=6)
+        ctk.CTkLabel(header, text="Giọng", text_color=theme.TEXT_2).grid(row=0, column=3, padx=(10, 4))
         self.voice_box = ctk.CTkComboBox(header, values=[""], width=260, state="readonly", command=self._voice_chosen)
-        self.voice_box.grid(row=0, column=3)
+        self.voice_box.grid(row=0, column=4)
 
-        self.text = ctk.CTkTextbox(self, wrap="word", font=ctk.CTkFont(size=16), spacing3=6)
-        self.text.grid(row=1, column=0, sticky="nsew", padx=12, pady=4)
-        self.text.tag_config("current", background="#f5d142", foreground="#000000")
-        self.text.tag_config("done", foreground="#8a8a8a")
+        self.text = ctk.CTkTextbox(self, wrap="word", font=theme.font(17, serif=True), spacing3=8, border_spacing=12)
+        self.text.grid(row=1, column=0, sticky="nsew", pady=4)
+        self._apply_tags()
         self.text.bind("<ButtonRelease-1>", self._on_text_click)
         self.text.configure(state="disabled")
-        self.empty_hint = ctk.CTkLabel(self, text="Chưa chọn tài liệu. Bấm “Đổi tài liệu” hoặc mở tab Thư Viện.")
+        self.empty_hint = ctk.CTkLabel(self, text="Chưa chọn tài liệu. Bấm “Đổi tài liệu” hoặc mở Thư Viện.",
+                                       text_color=theme.MUTED)
         self.empty_hint.grid(row=1, column=0)
 
         note_row = ctk.CTkFrame(self, fg_color="transparent")
-        note_row.grid(row=2, column=0, sticky="e", padx=12)
-        self.note_btn = ctk.CTkButton(note_row, text="📝 Ghi chú đoạn đã chọn", state="disabled", command=self._note)
-        self.note_btn.pack()
+        note_row.grid(row=2, column=0, sticky="e", pady=(2, 6))
+        self.tag_bar = ctk.CTkFrame(note_row, fg_color=theme.ACCENT_SOFT, corner_radius=10)
+        ctk.CTkLabel(self.tag_bar, text="⭐ Đã lưu đoạn này. Gắn nhãn:", text_color=theme.ACCENT,
+                     font=theme.font(12, "bold")).pack(side="left", padx=(12, 6), pady=6)
+        for value, label in EMOTIONS:
+            ctk.CTkButton(self.tag_bar, text=label, height=28, width=60, command=lambda v=value: self._tag_saved_quote(v),
+                          **theme.SECONDARY).pack(side="left", padx=3)
+        ctk.CTkButton(self.tag_bar, text="Xem", width=44, height=28, command=self._open_saved_quotes, **theme.GHOST).pack(
+            side="left", padx=(3, 8))
+        self.bookmark_btn = ctk.CTkButton(note_row, text="⭐ Đánh dấu đoạn này (B)", command=self._bookmark, **theme.SECONDARY)
+        self.bookmark_btn.pack(side="left", padx=(8, 6))
+        self.note_btn = ctk.CTkButton(note_row, text="📝 Trích đoạn đã chọn", state="disabled", command=self._note,
+                                      **theme.SECONDARY)
+        self.note_btn.pack(side="left")
+        self._saved_quote: dict[str, Any] | None = None
+        self._tag_job: str | None = None
 
-        self.progress = ctk.CTkProgressBar(self)
+        dock = ctk.CTkFrame(self, border_width=1, border_color=theme.BORDER_STRONG, corner_radius=16)
+        dock.grid(row=3, column=0, sticky="ew")
+        dock.columnconfigure(0, weight=1)
+        self.progress = ctk.CTkProgressBar(dock, height=6)
         self.progress.set(0)
-        self.progress.grid(row=3, column=0, sticky="ew", padx=12, pady=(6, 0))
-        self.position_label = ctk.CTkLabel(self, text="Câu 0 / 0", anchor="w")
-        self.position_label.grid(row=4, column=0, sticky="w", padx=12)
+        self.progress.grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 0))
+        self.position_label = ctk.CTkLabel(dock, text="Câu 0 / 0", anchor="w", text_color=theme.TEXT_2,
+                                           font=theme.font(12))
+        self.position_label.grid(row=1, column=0, sticky="w", padx=20)
 
-        controls = ctk.CTkFrame(self, fg_color="transparent")
-        controls.grid(row=5, column=0, pady=4)
+        controls = ctk.CTkFrame(dock, fg_color="transparent")
+        controls.grid(row=2, column=0, pady=4)
         reader = self.ctx.reader
         for text, command in (
-            ("⏮", lambda: reader.jump(0)), ("⏪ Câu trước", reader.previous),
+            ("⏮", lambda: reader.jump(0)), ("‹ Câu trước", reader.previous),
         ):
-            ctk.CTkButton(controls, text=text, width=100 if "Câu" in text else 50, command=command).pack(side="left", padx=3)
-        self.play_btn = ctk.CTkButton(controls, text="▶", width=70, command=self._toggle)
-        self.play_btn.pack(side="left", padx=3)
+            ctk.CTkButton(controls, text=text, width=100 if "Câu" in text else 46, height=40,
+                          command=command, **theme.SECONDARY).pack(side="left", padx=4)
+        self.play_btn = ctk.CTkButton(controls, text="▶", width=60, height=60, corner_radius=30,
+                                      font=theme.font(22), command=self._toggle)
+        self.play_btn.pack(side="left", padx=8)
         for text, command in (
-            ("Câu sau ⏩", reader.next), ("⏭", lambda: reader.jump(max(reader.total - 1, 0))),
+            ("Câu sau ›", reader.next), ("⏭", lambda: reader.jump(max(reader.total - 1, 0))),
         ):
-            ctk.CTkButton(controls, text=text, width=100 if "Câu" in text else 50, command=command).pack(side="left", padx=3)
+            ctk.CTkButton(controls, text=text, width=100 if "Câu" in text else 46, height=40,
+                          command=command, **theme.SECONDARY).pack(side="left", padx=4)
 
-        options = ctk.CTkFrame(self, fg_color="transparent")
-        options.grid(row=6, column=0, pady=2)
-        ctk.CTkLabel(options, text="Tốc độ:").pack(side="left", padx=(0, 6))
+        options = ctk.CTkFrame(dock, fg_color="transparent")
+        options.grid(row=3, column=0, pady=2)
+        ctk.CTkLabel(options, text="Tốc độ", text_color=theme.TEXT_2).pack(side="left", padx=(0, 8))
         self.speed_buttons = ctk.CTkSegmentedButton(
             options, values=[f"{s}x" for s in config.SPEED_LEVELS], command=self._speed_chosen)
         self.speed_buttons.set("1.0x")
         self.speed_buttons.pack(side="left")
-        ctk.CTkLabel(options, text="   Nhảy tới câu:").pack(side="left")
+        self.sleep_btn = ctk.CTkButton(options, text="⏲ Hẹn giờ", width=110, command=self._open_sleep, **theme.SECONDARY)
+        self.sleep_btn.pack(side="left", padx=(18, 0))
+        self.ambient_btn = ctk.CTkButton(options, text="🎵 Nhạc nền", width=120, command=self._open_ambient, **theme.SECONDARY)
+        self.ambient_btn.pack(side="left", padx=(8, 0))
+        ctk.CTkLabel(options, text="     Nhảy tới câu", text_color=theme.TEXT_2).pack(side="left")
         self.jump_entry = ctk.CTkEntry(options, width=70)
-        self.jump_entry.pack(side="left", padx=4)
+        self.jump_entry.pack(side="left", padx=6)
         self.jump_entry.bind("<Return>", lambda _e: self._jump_from_entry())
-        ctk.CTkButton(options, text="Đi", width=44, command=self._jump_from_entry).pack(side="left")
+        ctk.CTkButton(options, text="Đi", width=44, command=self._jump_from_entry, **theme.SECONDARY).pack(side="left")
 
-        self.status_label = ctk.CTkLabel(self, text="", anchor="w", text_color=("gray35", "gray65"))
-        self.status_label.grid(row=7, column=0, sticky="ew", padx=12, pady=(2, 8))
+        self.status_label = ctk.CTkLabel(dock, text="", anchor="center", text_color=theme.MUTED, font=theme.font(12))
+        self.status_label.grid(row=4, column=0, sticky="ew", padx=20, pady=(2, 12))
+
+    def _apply_tags(self) -> None:
+        """Tk text tags cannot take light/dark pairs, so they are set for the current appearance."""
+        self.text.tag_config("current", background=theme.mode_color(theme.ACCENT_SOFT),
+                             foreground=theme.mode_color(theme.TEXT))
+        self.text.tag_config("done", foreground=theme.mode_color(theme.MUTED))
+
+    def refresh_theme(self) -> None:
+        self._apply_tags()
 
     # -- ReaderListener (called from any thread) ----------------------------------------------------
 
@@ -115,6 +165,10 @@ class ReaderTab(ctk.CTkFrame):
         book = self.ctx.reader.book
         assert book is not None
         self.title_label.configure(text=book.title)
+        if len(book.chapters) > 1:
+            self.toc_btn.grid()
+        else:
+            self.toc_btn.grid_remove()
         self.empty_hint.grid_remove()
         self._window = None
         self._show_position(start_index)
@@ -177,8 +231,10 @@ class ReaderTab(ctk.CTkFrame):
             self.text.tag_add("current", ranges[0], ranges[1])
             self.text.tag_add("done", "1.0", ranges[0])
             self.text.see(ranges[0])
+        chapter = chapter_at(reader.book.chapters, index) if len(reader.book.chapters) > 1 else None
+        where = f"  ·  {chapter['title'][:70]}" if chapter else ""
         self.position_label.configure(text=f"Câu {format_number(index + 1)} / {format_number(reader.total)}"
-                                           f"   ({(index + 1) / reader.total * 100:.1f}%)")
+                                           f"   ({(index + 1) / reader.total * 100:.1f}%){where}")
         self.progress.set((index + 1) / reader.total)
         self.jump_entry.delete(0, "end")
         self.jump_entry.insert(0, str(index + 1))
@@ -199,6 +255,39 @@ class ReaderTab(ctk.CTkFrame):
         self.status_label.configure(text=text)
         if reschedule:
             self.after(500, self._tick_status)
+
+    def _tick_sleep(self) -> None:
+        self.refresh_sleep()
+        self.after(250, self._tick_sleep)
+
+    def refresh_sleep(self) -> None:
+        """Run the sleep timer one step and show its state on the button."""
+        active = self.ctx.reader.sleep.active
+        label = self.ctx.reader.sleep_tick()
+        self.sleep_btn.configure(text=f"⏲ {label}", **(theme.ACCENT_SOFT_BUTTON if active else theme.SECONDARY))
+
+    def _open_toc(self) -> None:
+        book = self.ctx.reader.book
+        if not book or len(book.chapters) < 2:
+            return
+        current = chapter_at(book.chapters, self.ctx.reader.index)
+        ChapterListDialog(
+            self, self.ctx, book.chapters, current["chapter_index"] if current else None,
+            on_pick=lambda chapter: self.ctx.reader.jump(chapter["start_sentence_index"], autoplay=True))
+
+    def refresh_ambient(self) -> None:
+        """Highlight the button while a background sound is chosen."""
+        on = bool(self.ctx.app.settings.get("ambient_track"))
+        self.ambient_btn.configure(**(theme.ACCENT_SOFT_BUTTON if on else theme.SECONDARY))
+
+    def _open_ambient(self) -> None:
+        AmbientDialog(self, self.ctx, on_changed=self.refresh_ambient)
+
+    def _open_sleep(self) -> None:
+        if not self.ctx.reader.book:
+            self.ctx.app.toast("Chưa chọn tài liệu.")
+            return
+        SleepTimerDialog(self, self.ctx, on_change=self.refresh_sleep)
 
     # -- actions -----------------------------------------------------------------------------------------------
 
@@ -254,4 +343,44 @@ class ReaderTab(ctk.CTkFrame):
             return
         sentence, start, end, excerpt = selection
         NoteDialog(self, self.ctx, book.book_id, sentence, start, end, excerpt,
-                   on_saved=lambda: self.ctx.app.toast("Đã lưu ghi chú."))
+                   on_saved=lambda: self.ctx.app.toast("Đã lưu trích dẫn."))
+
+    # -- one-tap favourite quote ---------------------------------------------------------------------------
+
+    def _bookmark(self) -> None:
+        """Save the sentence being read as a favourite quote; the feeling buttons then appear for a few seconds."""
+        book = self.ctx.reader.book
+        if not book:
+            self.ctx.app.toast("Chưa chọn tài liệu.")
+            return
+        index, voice = self.ctx.reader.index, self.ctx.app.current_voice_id
+        self.ctx.ui.run_in_thread(
+            lambda: self.ctx.api.create_note(book.book_id, index, voice=voice), self._quote_saved,
+            lambda exc: self.ctx.app.show_error(error_text(exc)))
+
+    def _quote_saved(self, note: dict[str, Any]) -> None:
+        self._saved_quote = note
+        self.tag_bar.pack(side="left", before=self.bookmark_btn)
+        if self._tag_job:
+            self.after_cancel(self._tag_job)
+        self._tag_job = self.after(8000, self._hide_tag_bar)
+
+    def _hide_tag_bar(self) -> None:
+        self._tag_job = None
+        self._saved_quote = None
+        self.tag_bar.pack_forget()
+
+    def _tag_saved_quote(self, tag: str) -> None:
+        note = self._saved_quote
+        if not note:
+            return
+        self.ctx.ui.run_in_thread(
+            lambda: self.ctx.api.update_note(note["id"], emotion_tag=tag),
+            lambda saved: (self.ctx.app.toast(f'Đã gắn nhãn "{dict(EMOTIONS)[tag]}".'), self._quote_saved(saved)),
+            lambda exc: self.ctx.app.show_error(error_text(exc)))
+
+    def _open_saved_quotes(self) -> None:
+        book = self.ctx.reader.book
+        self._hide_tag_bar()
+        if book:
+            self.ctx.app.show_quotes_for(book.book_id)

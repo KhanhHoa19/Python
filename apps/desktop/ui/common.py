@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import customtkinter as ctk
@@ -24,6 +24,8 @@ class AppContext:
     reader: ReaderController
     output: AudioOutput
     app: Any
+    user: dict[str, Any] = field(default_factory=dict)  # the signed-in account: id, username, full_name, role
+    covers: Any = None  # ui.images.CoverCache
 
 
 def error_text(exc: Exception) -> str:

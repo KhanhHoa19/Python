@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from ui.viewmodels import (
+    check_book_title,
     describe_voice,
-    filter_and_sort_books,
     format_datetime,
     format_minutes,
     format_number,
     most_recent_unfinished,
     normalize_text,
+    pick_initial_tab,
+    play_label,
+    progress_fraction,
     usage_ratio,
 )
 
@@ -17,7 +20,7 @@ from ui.viewmodels import (
 def book(title: str, pct: float | None = None, last: str | None = None, created: str = "2026-01-01T00:00:00", author: str = "") -> dict:
     data = {"id": 1, "title": title, "author": author, "created_at": created}
     if pct is not None:
-        data["bookmark"] = {"completion_percentage": pct, "last_read_at": last}
+        data["progress"] = {"completion_percentage": pct, "last_read_at": last}
     return data
 
 
@@ -25,25 +28,21 @@ def test_normalize_strips_vietnamese_accents_and_case() -> None:
     assert normalize_text("Đại Học Bách Khoa") == "dai hoc bach khoa"
 
 
-def test_search_ignores_accents() -> None:
-    books = [book("Cấu trúc dữ liệu"), book("Giáo trình Python")]
-    result = filter_and_sort_books(books, "cau truc", "Tên A→Z")
-    assert [b["title"] for b in result] == ["Cấu trúc dữ liệu"]
+def test_progress_fraction_is_clamped() -> None:
+    assert progress_fraction(None) == 0.0
+    assert progress_fraction({"completion_percentage": 42.5}) == 0.425
+    assert progress_fraction({"completion_percentage": 180}) == 1.0
 
 
-def test_search_matches_author() -> None:
-    assert len(filter_and_sort_books([book("A", author="Nguyễn Văn An")], "van an", "Tên A→Z")) == 1
+def test_initial_shelf_tab_is_the_first_with_books() -> None:
+    assert pick_initial_tab({"reading": 2, "unread": 5, "completed": 1, "favorite": 3}) == "reading"
+    assert pick_initial_tab({"reading": 0, "unread": 5, "completed": 1, "favorite": 3}) == "unread"
+    assert pick_initial_tab({"reading": 0, "unread": 0, "completed": 0, "favorite": 4}) == "favorite"
+    assert pick_initial_tab({}) == "reading"
 
 
-def test_sort_by_recent_puts_unread_last() -> None:
-    books = [book("never"), book("old", 10, "2026-01-02T10:00:00"), book("new", 10, "2026-03-02T10:00:00")]
-    assert [b["title"] for b in filter_and_sort_books(books, "", "Đọc gần đây")] == ["new", "old", "never"]
-
-
-def test_sort_by_progress_and_added_date() -> None:
-    books = [book("a", 10, created="2026-01-01T00:00:00"), book("b", 90, created="2026-02-01T00:00:00")]
-    assert filter_and_sort_books(books, "", "Tiến độ")[0]["title"] == "b"
-    assert filter_and_sort_books(books, "", "Ngày thêm")[0]["title"] == "b"
+def test_play_label_follows_status() -> None:
+    assert [play_label(s) for s in ("reading", "completed", "unread", None)] == ["Nghe tiếp", "Nghe lại", "Bắt đầu nghe", "Bắt đầu nghe"]
 
 
 def test_most_recent_unfinished_skips_new_and_finished() -> None:
@@ -70,3 +69,49 @@ def test_describe_voice() -> None:
 
 def test_usage_ratio() -> None:
     assert usage_ratio(25, 100) == 0.25 and usage_ratio(500, 100) == 1.0 and usage_ratio(10, 0) == 0.0
+
+
+def test_check_book_title() -> None:
+    assert check_book_title("  Sherlock   Holmes \n tập một ") == ("Sherlock Holmes tập một", None)
+    for raw in ("", "   ", "\n\t"):
+        assert check_book_title(raw)[0] is None and check_book_title(raw)[1]
+    assert check_book_title("ế" * 255)[1] is None and check_book_title("ế" * 256)[0] is None
+
+
+def test_cover_helpers_are_stable_and_match_the_web_app() -> None:
+    from ui.viewmodels import cover_color, cover_hue, cover_initials
+
+    assert cover_hue("Sherlock Holmes") == cover_hue("Sherlock Holmes")
+    assert 0 <= cover_hue("") < 360 and 0 <= cover_hue("x" * 500) < 360
+    assert len({cover_hue(t) for t in ("Một", "Hai", "Ba", "Bốn", "Năm", "Sáu")}) > 3
+    assert cover_color("Đắc Nhân Tâm").startswith("#") and len(cover_color("Đắc Nhân Tâm")) == 7
+    assert cover_initials("Đắc Nhân Tâm") == "ĐN"
+    assert cover_initials("  sherlock   holmes  ") == "SH"
+    assert cover_initials("— ...") == "♪"
+
+
+def test_voice_studio_helpers() -> None:
+    from ui.viewmodels import clone_quota, split_voices
+
+    provider = {"voice_id": "p", "is_custom": False}
+    shared = {"voice_id": "s", "is_custom": True, "is_public": True, "is_mine": False}
+    mine = {"voice_id": "m", "is_custom": True, "is_mine": True}
+    own_public = {"voice_id": "mp", "is_custom": True, "is_mine": True, "is_public": True}
+    system, own = split_voices([provider, shared, mine, own_public])
+    assert [v["voice_id"] for v in system] == ["p", "s"]
+    assert [v["voice_id"] for v in own] == ["m", "mp"]
+    assert clone_quota({"my_voice_count": 2, "max_voices": 3}) == (2, 3, False)
+    assert clone_quota({"my_voice_count": 3, "max_voices": 3})[2] is True
+    assert clone_quota({"my_voice_count": 8, "max_voices": None}) == (8, None, False)
+    assert clone_quota(None) == (0, None, False)
+    assert "Giọng chung" in describe_voice({"display_name": "A", "is_custom": True, "is_mine": False})
+
+
+def test_admin_helpers() -> None:
+    from ui.viewmodels import category_problem, sort_system_books
+
+    assert "tên" in (category_problem("  ", "#112233") or "")
+    assert "Màu" in (category_problem("Sử", "red") or "")
+    assert category_problem("Sử", "#A1B2c3") is None
+    books = [{"title": "Zeta", "is_public": False}, {"title": "Đông", "is_public": True}, {"title": "An", "is_public": True}]
+    assert [b["title"] for b in sort_system_books(books)] == ["An", "Đông", "Zeta"]

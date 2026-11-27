@@ -13,17 +13,25 @@ import config
 from api_client import ApiClient
 from player.audio_output import AudioOutput
 from player.controller import ReaderController
+from ui import theme
+from ui.admin_tab import AdminTab
 from ui.common import AppContext, error_text
-from ui.dialogs import SettingsDialog, VoicesDialog
+from ui.dialogs import SettingsDialog
 from ui.dispatcher import UiDispatcher
+from ui.explore_tab import ExploreTab
+from ui.images import CoverCache
 from ui.library_tab import LibraryTab
+from ui.quotes_tab import QuotesTab
 from ui.reader_tab import ReaderTab
+from ui.sidebar import SidebarTabs
 from ui.stats_tab import StatsTab
 from ui.viewmodels import most_recent_unfinished
+from ui.voices_tab import VoicesTab
 
 logger = logging.getLogger(__name__)
 
-TAB_READER, TAB_LIBRARY, TAB_STATS = "Phòng Đọc", "Thư Viện & Ghi Chú", "Thống Kê"
+TAB_READER, TAB_EXPLORE, TAB_LIBRARY, TAB_QUOTES, TAB_STATS, TAB_VOICES, TAB_ADMIN = (
+    "Phòng Đọc", "Khám Phá", "Kệ Sách Của Tôi", "Trích Dẫn Yêu Thích", "Thống Kê", "Kho Giọng Đọc", "Quản Trị")
 
 
 class _ListenerProxy:
@@ -50,39 +58,61 @@ class _ListenerProxy:
 
 
 class App(ctk.CTk):
-    def __init__(self, api: ApiClient, output: AudioOutput):
+    def __init__(self, api: ApiClient, output: AudioOutput, user: dict[str, Any] | None = None):
         super().__init__()
         self.title("Audiobook TTS")
-        self.geometry("1040x780")
-        self.minsize(860, 640)
-        ctk.set_appearance_mode("System")
-        ctk.set_default_color_theme("blue")
+        self.geometry("1220x800")
+        self.minsize(1000, 660)
+        self.appearance = theme.load_appearance()
+        ctk.set_appearance_mode(self.appearance)
+        theme.apply()
+        self.configure(fg_color=theme.BG)  # the root window was created before the theme was patched
 
+        self.user: dict[str, Any] = user or {}
+        self.logout_requested = False
+        self.session_expired = False
         self.voices: list[dict[str, Any]] = []
         self.current_voice_id: str | None = None
         self.settings: dict[str, Any] = {}
         self._resumed = False
+        self.categories: list[dict[str, Any]] = []
+        self.category: str | None = None  # slug chosen in the sidebar; filters Khám phá and the shelf
         self._toast_job: str | None = None
 
         self.ui = UiDispatcher(self)
         proxy = _ListenerProxy()
         reader = ReaderController(api, output, proxy)
-        self.ctx = AppContext(api=api, ui=self.ui, reader=reader, output=output, app=self)
+        self.ctx = AppContext(api=api, ui=self.ui, reader=reader, output=output, app=self, user=self.user, covers=CoverCache())
+        api.on_unauthorized = lambda: self.ui.post(self._on_session_rejected)  # from any worker thread
 
-        self._build_header()
-        self.tabs = ctk.CTkTabview(self, command=self._tab_changed)
-        self.tabs.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 4))
-        self.reader_tab = ReaderTab(self.tabs.add(TAB_READER), self.ctx)
-        self.library_tab = LibraryTab(self.tabs.add(TAB_LIBRARY), self.ctx)
-        self.stats_tab = StatsTab(self.tabs.add(TAB_STATS), self.ctx)
-        for tab in (self.reader_tab, self.library_tab, self.stats_tab):
-            tab.pack(fill="both", expand=True)
+        self.tabs = SidebarTabs(self, command=self._tab_changed)
+        self.tabs.grid(row=0, column=0, sticky="nsew")
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        self.reader_tab = ReaderTab(self.tabs.add(TAB_READER, "🎧"), self.ctx)
+        self.explore_tab = ExploreTab(self.tabs.add(TAB_EXPLORE, "🧭"), self.ctx)
+        self.library_tab = LibraryTab(self.tabs.add(TAB_LIBRARY, "📚"), self.ctx)
+        self.quotes_tab = QuotesTab(self.tabs.add(TAB_QUOTES, "⭐"), self.ctx)
+        self.stats_tab = StatsTab(self.tabs.add(TAB_STATS, "📊"), self.ctx)
+        self.voices_tab = VoicesTab(self.tabs.add(TAB_VOICES, "🎙"), self.ctx)
+        screens = [self.reader_tab, self.explore_tab, self.library_tab, self.quotes_tab, self.stats_tab, self.voices_tab]
+        self.admin_tab: AdminTab | None = None
+        if self.user.get("role") == "admin":  # the screen does not exist for anyone else
+            self.admin_tab = AdminTab(self.tabs.add(TAB_ADMIN, "🛡"), self.ctx)
+            screens.append(self.admin_tab)
+        for tab in screens:
+            tab.pack(fill="both", expand=True, padx=24, pady=(18, 8))
         proxy.target = self.reader_tab
 
-        self.toast_label = ctk.CTkLabel(self, text="", anchor="w", text_color=("gray25", "gray75"))
-        self.toast_label.grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 6))
-        self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self._build_banner()
+        self.tabs.set_account(self.user)
+        self.tabs.add_tool("⚙   Kết nối & Cài đặt", self.open_settings)
+        self.theme_btn = self.tabs.add_tool("", self.toggle_appearance)
+        self.tabs.add_tool("⎋   Đăng xuất", self.logout)
+        self._show_appearance()
+
+        self.toast_label = ctk.CTkLabel(self.tabs.content, text="", anchor="w", text_color=theme.TEXT_2)
+        self.toast_label.grid(row=2, column=0, sticky="ew", padx=28, pady=(0, 8))
 
         self._bind_shortcuts()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -91,19 +121,42 @@ class App(ctk.CTk):
 
     # -- layout --------------------------------------------------------------------------------------------
 
-    def _build_header(self) -> None:
-        header = ctk.CTkFrame(self, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", padx=12, pady=(8, 0))
-        header.columnconfigure(1, weight=1)
-        ctk.CTkLabel(header, text="🎧 Audiobook TTS", font=ctk.CTkFont(size=18, weight="bold")).grid(row=0, column=0)
-        ctk.CTkButton(header, text="⚙", width=40, command=self.open_settings).grid(row=0, column=2)
+    def _build_banner(self) -> None:
+        self.banner = ctk.CTkFrame(self.tabs.content, fg_color=theme.DANGER, corner_radius=10)
+        self.banner_label = ctk.CTkLabel(self.banner, text="", text_color="#ffffff", anchor="w", wraplength=760)
+        self.banner_label.pack(side="left", padx=12, pady=8)
+        ctk.CTkButton(self.banner, text="Thử lại", width=80, fg_color="#ffffff", text_color="#9e2d22",
+                      hover_color="#f3e3e0", command=self._retry).pack(side="right", padx=10)
 
-        self.banner = ctk.CTkFrame(self, fg_color="#d64545", corner_radius=6)
-        self.banner_label = ctk.CTkLabel(self.banner, text="", text_color="white", anchor="w", wraplength=800)
-        self.banner_label.pack(side="left", padx=10, pady=6)
-        ctk.CTkButton(self.banner, text="Thử lại", width=80, fg_color="white", text_color="#d64545",
-                      hover_color="#f0f0f0", command=self._retry).pack(side="right", padx=8)
-        self.rowconfigure(1, weight=0)
+    # -- account ---------------------------------------------------------------------------------------------
+
+    def logout(self) -> None:
+        """Close the window and let main() show the sign-in form again."""
+        self.logout_requested = True
+        self._on_close()
+
+    def _on_session_rejected(self) -> None:
+        """The backend refused our token (expired, or the account is gone)."""
+        if not self.logout_requested:
+            self.session_expired = True
+            self.logout()
+
+    # -- appearance ------------------------------------------------------------------------------------------
+
+    def _show_appearance(self) -> None:
+        icon = {"System": "🖥", "Light": "☀", "Dark": "🌙"}[self.appearance]
+        self.theme_btn.configure(text=f"{icon}   Giao diện: {theme.APPEARANCE_LABEL[self.appearance]}")
+
+    def toggle_appearance(self) -> None:
+        """Cycle Tự động → Sáng → Tối. Widgets switch by themselves; Tk text tags and charts are redrawn."""
+        order = theme.APPEARANCES
+        self.appearance = order[(order.index(self.appearance) + 1) % len(order)]
+        ctk.set_appearance_mode(self.appearance)
+        theme.save_appearance(self.appearance)
+        self._show_appearance()
+        self.after(50, self.reader_tab.refresh_theme)
+        if self.tabs.get() == TAB_STATS:
+            self.after(50, self.stats_tab.refresh)
 
     # -- shared state / navigation ---------------------------------------------------------------------------
 
@@ -114,7 +167,23 @@ class App(ctk.CTk):
             return self.ctx.api.get_settings(), self.ctx.api.list_voices()
 
         self.ui.run_in_thread(work, self._startup_loaded, lambda exc: self.show_error(error_text(exc)))
+        self.ui.run_in_thread(self.ctx.api.list_categories, self._categories_loaded, lambda _exc: None)
         self.library_tab.refresh()
+
+    def _categories_loaded(self, categories: list[dict[str, Any]]) -> None:
+        self.categories = categories
+        self._show_category_chips()
+
+    def _show_category_chips(self) -> None:
+        for tab in (self.explore_tab, self.library_tab):
+            tab.chips.set_categories(self.categories, self.category)
+
+    def pick_category(self, slug: str | None) -> None:
+        """A topic tag on Khám phá or Kệ sách (click again to clear); both screens share the choice."""
+        self.category = None if slug == self.category else slug
+        self._show_category_chips()
+        if self.tabs.get() in (TAB_EXPLORE, TAB_LIBRARY):
+            self._tab_changed()
 
     def _startup_loaded(self, result: tuple[dict[str, Any], dict[str, Any]]) -> None:
         settings, voices = result
@@ -140,12 +209,20 @@ class App(ctk.CTk):
     def apply_settings(self, settings: dict[str, Any]) -> None:
         self.settings = settings
         self.ctx.reader.prefetch = int(settings["prefetch_count"])
+        self.ctx.reader.chapter_chime = bool(settings.get("chapter_chime", True))
+        self.ctx.reader.ambient.configure(int(settings.get("ambient_track") or 0), float(settings.get("ambient_volume", 0.4)))
+        self.reader_tab.refresh_ambient()
         if not self.ctx.reader.is_playing:
             self.ctx.reader.speed = float(settings["default_speed"])
             self.reader_tab.set_speed_label(self.ctx.reader.speed)
 
     def open_voices(self) -> None:
-        VoicesDialog(self, self.ctx, on_select=self.select_voice)
+        self.tabs.set(TAB_VOICES, notify=True)
+
+    def reload_shared(self) -> None:
+        """Voices and categories changed (an admin published a voice, edited a category): refresh what every screen shows."""
+        self.ui.run_in_thread(self.ctx.api.list_voices, self.set_voices, lambda _exc: None)
+        self.ui.run_in_thread(self.ctx.api.list_categories, self._categories_loaded, lambda _exc: None)
 
     def open_settings(self) -> None:
         SettingsDialog(self, self.ctx)
@@ -159,19 +236,35 @@ class App(ctk.CTk):
 
         def done(start: int) -> None:
             self.ctx.reader.index = start
+            saved = self.ctx.reader.saved_voice
+            if saved and saved != self.current_voice_id and any(v["voice_id"] == saved for v in self.voices):
+                self.select_voice(saved)  # the voice last used for this book
             self.reader_tab.show_book(start)
             self.tabs.set(TAB_READER)
             self.toast("")
 
         self.ui.run_in_thread(work, done, lambda exc: self.show_error(error_text(exc)))
 
+    def on_book_renamed(self, book_id: int, title: str) -> None:
+        """Keep the title shown in the reader in step with a rename done in the library."""
+        book = self.ctx.reader.book
+        if book and book.book_id == book_id:
+            book.title = title
+            self.reader_tab.title_label.configure(text=title)
+
     def close_reader_book(self) -> None:
         self.ctx.reader.close_book()
         self.reader_tab.title_label.configure(text="Chưa chọn tài liệu")
         self.reader_tab.empty_hint.grid()
+        self.reader_tab.toc_btn.grid_remove()
         self.reader_tab.text.configure(state="normal")
         self.reader_tab.text.delete("1.0", "end")
         self.reader_tab.text.configure(state="disabled")
+
+    @property
+    def resumed(self) -> bool:
+        """True once the book being read last time was reopened (or a book is already open)."""
+        return self._resumed or bool(self.ctx.reader.book)
 
     def on_library_loaded(self, books: list[dict[str, Any]]) -> None:
         """First load only: reopen the book that was being read, positioned but not playing."""
@@ -186,7 +279,7 @@ class App(ctk.CTk):
 
     def show_error(self, message: str) -> None:
         self.banner_label.configure(text=message)
-        self.banner.grid(row=1, column=0, sticky="ew", padx=12, pady=(6, 0))
+        self.banner.grid(row=0, column=0, sticky="ew", padx=28, pady=(14, 0))
 
     def hide_error(self) -> None:
         self.banner.grid_remove()
@@ -206,10 +299,26 @@ class App(ctk.CTk):
 
     def _tab_changed(self) -> None:
         current = self.tabs.get()
-        if current == TAB_LIBRARY:
+        if current == TAB_EXPLORE:
+            self.explore_tab.refresh()
+        elif current == TAB_LIBRARY:
             self.library_tab.refresh()
+        elif current == TAB_QUOTES:
+            self.quotes_tab.refresh()
         elif current == TAB_STATS:
             self.stats_tab.refresh()
+        elif current == TAB_VOICES:
+            self.voices_tab.refresh()
+        elif current == TAB_ADMIN and self.admin_tab:
+            self.admin_tab.refresh()
+
+    def show_quotes_for(self, book_id: int | None) -> None:
+        """Open Trích dẫn yêu thích, limited to one book (or all of them with None)."""
+        self.quotes_tab.show_book(book_id)
+        if self.tabs.get() == TAB_QUOTES:
+            self.quotes_tab.refresh()
+        else:
+            self.tabs.set(TAB_QUOTES, notify=True)
 
     def _typing_in_field(self) -> bool:
         widget = self.focus_get()
@@ -242,11 +351,14 @@ class App(ctk.CTk):
         self.bind("<Up>", on_reader(lambda: change_speed(1)))
         self.bind("<Down>", on_reader(lambda: change_speed(-1)))
         self.bind("<n>", on_reader(self.reader_tab._note))
+        self.bind("<b>", on_reader(self.reader_tab._bookmark))
 
     # -- shutdown ----------------------------------------------------------------------------------------------------------
 
     def _on_close(self) -> None:
         """Stop workers, flush bookmark + session (bounded wait), release audio, then close."""
+        self.ctx.api.on_unauthorized = None  # the final saves below may be refused; that is not news any more
+        self.quotes_tab.shutdown()
         self.ui.close()
         flusher = threading.Thread(target=self.ctx.reader.close_book, daemon=True)
         flusher.start()

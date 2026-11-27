@@ -18,6 +18,10 @@ class FakeApi:
         self.bookmark_index = bookmark_index
         self.fail_audio = fail_audio
         self.bookmarks: list[tuple] = []
+        self.bookmark_voices: list[str | None] = []
+        self.chapters: list[dict[str, Any]] = []
+        self.chapters_error: ApiError | None = None
+        self.saved_voice: str | None = None
         self.sessions: list[dict[str, Any]] = []
         self.audio_requests: list[tuple] = []
 
@@ -25,10 +29,17 @@ class FakeApi:
         return self.sentences
 
     def get_bookmark(self, book_id: int) -> dict[str, Any]:
-        return {"current_sentence_index": self.bookmark_index}
+        return {"current_sentence_index": self.bookmark_index, "voice": self.saved_voice}
 
-    def save_bookmark(self, book_id: int, chapter: int, index: int, percent: float) -> None:
+    def get_chapters(self, book_id: int) -> list[dict[str, Any]]:
+        if self.chapters_error:
+            raise self.chapters_error
+        return self.chapters
+
+    def save_bookmark(self, book_id: int, chapter: int, index: int, percent: float,
+                      voice: str | None = None) -> None:
         self.bookmarks.append((book_id, chapter, index, percent))
+        self.bookmark_voices.append(voice)
 
     def record_session(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.sessions.append(payload)
@@ -152,6 +163,39 @@ def test_voice_is_sent_to_backend(output: FakeOutput) -> None:
     assert api.audio_requests[0] == (0, 1.0, "mock-vi-male")
 
 
+def test_session_and_bookmark_carry_the_voice(output: FakeOutput) -> None:
+    api = FakeApi(sentences=2)
+    controller, listener = make(api, output)
+    controller.voice = "mock-vi-male"
+    controller.play()
+    assert wait_for(lambda: "finished" in listener.states) and wait_for(lambda: api.sessions)
+    assert api.sessions[0]["voice"] == "mock-vi-male"
+    assert wait_for(lambda: api.bookmark_voices and api.bookmark_voices[-1] == "mock-vi-male")
+
+
+def test_changing_voice_ends_the_session_of_the_old_voice(output: FakeOutput) -> None:
+    api = FakeApi(sentences=40)
+    output.duration = 0.05
+    controller, listener = make(api, output)
+    controller.voice = "voice-a"
+    controller.play()
+    assert wait_for(lambda: len(output.played) >= 2)
+    controller.set_voice("voice-b")
+    assert wait_for(lambda: api.sessions)
+    assert api.sessions[0]["voice"] == "voice-a"
+    played = len(output.played)
+    assert wait_for(lambda: len(output.played) >= played + 2)  # at least one sentence finished in voice-b
+    controller.close_book()
+    assert api.sessions[-1]["voice"] == "voice-b"
+
+
+def test_load_book_exposes_the_remembered_voice(output: FakeOutput) -> None:
+    api = FakeApi()
+    api.saved_voice = "mock-vi-male"
+    controller, _ = make(api, output)
+    assert controller.saved_voice == "mock-vi-male"
+
+
 def test_quota_error_stops_and_reports(output: FakeOutput) -> None:
     api = FakeApi(sentences=3, fail_audio=ApiError(429, "Daily character limit reached."))
     controller, listener = make(api, output)
@@ -186,3 +230,28 @@ def test_open_second_book_saves_first_books_bookmark(output: FakeOutput) -> None
     controller.load_book(2, "Sách 2")
     assert api.bookmarks and api.bookmarks[-1][0] == 1  # first book saved at index 2
     assert controller.book and controller.book.book_id == 2
+
+
+def test_load_book_reads_the_table_of_contents(output: FakeOutput) -> None:
+    api = FakeApi(sentences=4)
+    api.chapters = [
+        {"chapter_index": 1, "title": "Một", "start_sentence_index": 0, "end_sentence_index": 1, "sentence_count": 2, "word_count": 4},
+        {"chapter_index": 2, "title": "Hai", "start_sentence_index": 2, "end_sentence_index": 3, "sentence_count": 2, "word_count": 4},
+    ]
+    controller, _ = make(api, output)
+    assert controller.book and [c["title"] for c in controller.book.chapters] == ["Một", "Hai"]
+
+
+def test_a_missing_table_of_contents_does_not_stop_reading(output: FakeOutput) -> None:
+    api = FakeApi(sentences=2)
+    api.chapters_error = ApiError(404, "no chapters")
+    controller, _ = make(api, output)
+    assert controller.book and controller.book.chapters == [] and controller.total == 2
+
+
+def test_jumping_to_a_chapter_starts_playing_there(output: FakeOutput) -> None:
+    api = FakeApi(sentences=6)
+    controller, listener = make(api, output)
+    controller.jump(3, autoplay=True)
+    assert wait_for(lambda: "finished" in listener.states)
+    assert listener.positions[0] == 3 and controller.index == 5

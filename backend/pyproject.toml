@@ -29,6 +29,8 @@ dependencies = [
     "pypdf>=4.0.0",
     "python-docx>=1.1.0",
     "matplotlib>=3.8.0",
+    "pandas>=2.2",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
@@ -88,6 +90,7 @@ module = [
     "pymysql.*",
     "pypdf.*",
     "docx.*",
+    "pandas.*",
 ]
 ignore_missing_imports = true
 

@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy import Engine, text
 
+from src.core.analytics import stats
 from src.core.models.book import Book, Bookmark, BookSentence, Chapter
 from src.core.models.session import ReadingSession
 from src.core.models.telemetry import NetworkMetric
@@ -407,20 +408,11 @@ class SqlSessionRepository:
         first_day = datetime.now(UTC).date() - timedelta(days=max(1, days) - 1)
         with self.engine.connect() as conn:
             rows = conn.execute(
-                text("""
-                    SELECT voice, SUM(duration_seconds), SUM(words_read), COUNT(id)
-                    FROM reading_sessions
-                    WHERE user_id = :user AND start_time >= :since
-                    GROUP BY voice
-                """),
+                text("SELECT voice, duration_seconds, words_read FROM reading_sessions "
+                     "WHERE user_id = :user AND start_time >= :since"),
                 {"user": self.user_id, "since": first_day.strftime("%Y-%m-%d 00:00:00")},
             ).fetchall()
-        stats = [
-            {"voice": r[0] or "", "minutes": round(float(r[1] or 0) / 60.0, 1),
-             "words": int(r[2] or 0), "sessions": int(r[3] or 0)}
-            for r in rows
-        ]
-        return sorted(stats, key=lambda s: s["minutes"], reverse=True)
+        return stats.voice_stats(rows)  # Pandas groupby
 
     def get_daily_stats(self, days: int = 7) -> list[dict[str, Any]]:
         """Return one row per calendar day for the last `days` days (zero-filled)."""
@@ -429,26 +421,11 @@ class SqlSessionRepository:
         first_day = today - timedelta(days=days - 1)
         with self.engine.connect() as conn:
             rows = conn.execute(
-                text("""
-                    SELECT DATE(start_time), SUM(duration_seconds), SUM(words_read), COUNT(id)
-                    FROM reading_sessions
-                    WHERE user_id = :user AND start_time >= :since
-                    GROUP BY DATE(start_time)
-                """),
+                text("SELECT start_time, duration_seconds, words_read FROM reading_sessions "
+                     "WHERE user_id = :user AND start_time >= :since"),
                 {"user": self.user_id, "since": first_day.strftime("%Y-%m-%d 00:00:00")},
             ).fetchall()
-        by_day = {str(r[0]): r for r in rows}
-        result = []
-        for offset in range(days):
-            day = (first_day + timedelta(days=offset)).isoformat()
-            r = by_day.get(day)
-            result.append({
-                "date": day,
-                "minutes": round(float(r[1] or 0) / 60.0, 1) if r else 0.0,
-                "words": int(r[2] or 0) if r else 0,
-                "sessions": int(r[3] or 0) if r else 0,
-            })
-        return result
+        return stats.daily_stats(rows, days, today)  # Pandas groupby + reindex
 
 
 class SqlTelemetryRepository:
@@ -537,19 +514,7 @@ class SqlTelemetryRepository:
                      f"WHERE nm.recorded_at >= :since{user_filter}"),
                 {"since": since, "user": self.user_id},
             ).fetchall()
-        latencies = sorted(float(r[0]) * 1000.0 for r in rows)
-        total = len(rows)
-        ok = sum(1 for r in rows if str(r[1]).upper() == "SUCCESS")
-        if not latencies:
-            return {"total_calls": 0, "avg_latency_ms": 0.0, "p95_latency_ms": 0.0, "max_latency_ms": 0.0, "success_rate": 0.0}
-        p95_index = min(len(latencies) - 1, max(0, int(round(0.95 * len(latencies))) - 1))
-        return {
-            "total_calls": total,
-            "avg_latency_ms": round(sum(latencies) / len(latencies), 1),
-            "p95_latency_ms": round(latencies[p95_index], 1),
-            "max_latency_ms": round(latencies[-1], 1),
-            "success_rate": round(ok / total * 100.0, 1),
-        }
+        return stats.latency_stats([float(r[0]) for r in rows], [str(r[1]) for r in rows])  # NumPy
 
 
 class SqlVoiceRepository:

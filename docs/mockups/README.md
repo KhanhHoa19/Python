@@ -3,7 +3,7 @@
 Bộ mockup này là **hợp đồng giao diện chung** cho Web (React) và Desktop (CustomTkinter).
 Công nghệ khác nhau, nhưng **số màn hình, tên màn, chức năng, trạng thái và API phải khớp nhau**.
 
-## Danh sách màn hình (11 màn – cả hai client đều phải có đủ)
+## Danh sách màn hình (12 màn – cả hai client đều phải có đủ)
 
 | Mã | Màn hình | File | Loại | Nhóm tab |
 |----|----------|------|------|----------|
@@ -16,6 +16,7 @@ Công nghệ khác nhau, nhưng **số màn hình, tên màn, chức năng, tr�
 | S07 | Xuất audio | [S07-export.md](S07-export.md) | Hộp thoại | Thư Viện & Ghi Chú |
 | S08 | Thống kê | [S08-statistics.md](S08-statistics.md) | Trang | Thống Kê |
 | S10 | Khám phá | [S10-explore.md](S10-explore.md) | Trang | Khám Phá |
+| S12 | Gợi Ý (đề xuất sách) | [S12-recommend.md](S12-recommend.md) | Trang | Gợi Ý |
 | S11 | Quản Trị (chỉ admin) | [S11-admin.md](S11-admin.md) | Trang | Quản Trị |
 | S09 | Đăng nhập & Đăng ký | [S09-login.md](S09-login.md) | Trang (ngoài sidebar) | – |
 
@@ -27,7 +28,8 @@ Thanh điều hướng là **sidebar dọc bên trái** (web ở màn hẹp ≤ 
 ┌───────────────┬──────────────────────────────────────────┐
 │ ▣ Audiobook TTS│  Tiêu đề màn hình                  [hành động] │
 │ 🎧 Phòng Đọc   │                                          │
-│ 🧭 Khám Phá    │                                          │
+│ 🧭 Khám Phá    │
+│ ✨ Gợi Ý       │                                          │
 │ 📚 Kệ Sách Của Tôi │  Nội dung                          │
 │ ⭐ Trích Dẫn Yêu Thích │                                  │
 │ 📊 Thống Kê    │                                          │
@@ -43,6 +45,7 @@ Thanh điều hướng là **sidebar dọc bên trái** (web ở màn hẹp ≤ 
 |-----|-----------|---------|
 | Phòng Đọc | S03 | S04 (ô chọn giọng › `+ Thêm giọng mới…` chuyển sang màn Kho Giọng Đọc) |
 | Khám Phá | S10 | S02 (admin đăng sách hệ thống) |
+| Gợi Ý | S12 | S10 (thêm vào kệ), S03 (nghe ngay) |
 | Kệ Sách Của Tôi | S01 (4 tab theo trạng thái) | S02, S07 |
 | Trích Dẫn Yêu Thích | S06 | S03 (nút ⭐ / phím B lưu trích dẫn) |
 | Thống Kê | S08 | – |

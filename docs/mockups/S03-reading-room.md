@@ -27,7 +27,8 @@
 |------------|-------|
 | Chọn tài liệu | Mở danh sách rút gọn của S01 |
 | Mục lục | Nút `☰ Mục lục` (chỉ hiện khi tài liệu có từ 2 chương) mở hộp **Mục lục**; xem mục "Mục lục chương" bên dưới |
-| Chọn giọng | Dropdown giọng; mục cuối `+ Thêm giọng mới…` mở S04 |
+| Chọn giọng | Dropdown **Giọng dẫn chuyện**; mục cuối `+ Thêm giọng mới…` mở S04 |
+| Giọng nhân vật | Dropdown **Giọng nhân vật**: `Một giọng (không phân vai)` (mặc định) hoặc một giọng bất kỳ; xem mục "Đọc phân vai" bên dưới |
 | Khung văn bản | Hiển thị ±N câu quanh câu hiện tại, tự cuộn; bấm vào câu bất kỳ để nhảy tới |
 | Highlight | Câu đang đọc nền vàng nhạt, chữ đậm; câu đã đọc làm mờ |
 | Thanh tiến độ | `Câu x / tổng` và `%` |
@@ -61,6 +62,14 @@ Hộp thoại **Mục lục** liệt kê mọi chương: tên chương và `N c�
 - **Sách nạp từ trước khi có mục lục:** backend dựng lại từ số chương của từng câu, tên `Chương N` (lưu lại, chỉ làm một lần). Muốn có tên chương thật, xóa sách rồi tải lại file.
 - Nếu không lấy được mục lục (lỗi mạng/404) thì vẫn đọc bình thường, chỉ không có nút và tên chương.
 
+## Đọc phân vai (Multi-Voice Narration)
+Chọn một giọng ở ô **Giọng nhân vật** thì **lời thoại** đọc bằng giọng đó, phần còn lại (lời dẫn) đọc bằng **Giọng dẫn chuyện**. Chọn `Một giọng (không phân vai)` để tắt. Lựa chọn **lưu riêng từng người** (`character_voice` trong `PUT /api/settings`), áp dụng cho mọi sách, đổi giữa chừng thì câu đang đọc phát lại bằng giọng mới; toast `Đã bật đọc phân vai: …` / `Đã tắt đọc phân vai.`
+- **Nhận diện lời thoại** (tự động, ở máy chủ, **không cần nạp lại sách**): chữ nằm trong ngoặc kép `“…”`, `"…"`, `«…»`, hoặc câu mở đầu bằng gạch đầu dòng đối thoại (`-`, `–`, `—` kèm dấu cách). Ví dụ `Anh nói: "Đừng đi!" rồi quay đi.` → dẫn `Anh nói:` · nhân vật `Đừng đi!` · dẫn `rồi quay đi.`; `- Em đi đâu đấy? - Nam hỏi.` → nhân vật `Em đi đâu đấy?` · dẫn `Nam hỏi.`
+- Một lời thoại **kéo dài nhiều câu** (mở ngoặc ở câu này, đóng ở câu sau) được nhận ra: các câu giữa vẫn là nhân vật. Ngoặc mở quá 12 câu không đóng bị coi là dấu thừa (không biến cả cuốn thành lời thoại).
+- Máy chủ đọc từng đoạn bằng giọng tương ứng rồi **ghép thành một file cho câu đó**, nên web, desktop và **xuất audio** (S07) cho kết quả giống nhau (`GET /api/audio/{sách}/{câu}?voice=&dialogue_voice=`, `POST /api/books/{id}/export` nhận `dialogue_voice`). Câu không có lời thoại dùng đúng audio như khi một giọng, nên bộ nhớ đệm cũ vẫn dùng được.
+- **Chi phí:** số ký tự không đổi (dấu ngoặc không được đọc) nhưng một câu thoại cần 2–3 lượt gọi TTS thay vì 1, nên lần nghe đầu chậm hơn một chút. Giọng nhân vật phải dùng được với người nghe (không thể chọn giọng riêng của người khác).
+- **Giới hạn đã biết:** lời thoại bằng gạch đầu dòng kéo dài qua nhiều câu chỉ nhận ra ở câu đầu (hệ thống không giữ ranh giới đoạn văn); gạch đầu dòng của danh sách liệt kê bị đọc như lời thoại; PDF làm hỏng dấu ngoặc thì nhận diện kém. Chỉ có **hai vai** (dẫn chuyện và nhân vật), không phân biệt từng nhân vật.
+
 ## Âm thanh nền & chuông chuyển chương
 Hộp thoại **Âm thanh nền**: danh sách `Tắt` + các bản trong thư viện (admin quản lý ở S11), thanh **âm lượng nền** 0–100% (độc lập với giọng đọc), ô `Phát tiếng chuông khi sang chương mới`, nút `Xong`. Mọi thay đổi **lưu ngay** và áp dụng ngay.
 - Lựa chọn **riêng từng người** (`GET/PUT /api/settings`: `ambient_track` (0 = tắt), `ambient_volume` (mặc định 0.4), `chapter_chime` (mặc định bật)). Mặc định là **tắt** nhạc nền.
@@ -85,6 +94,7 @@ Hộp thoại **Hẹn giờ tắt**: `15 phút` · `30 phút` · `45 phút` · `
 
 ## Tiêu chí hoàn thành
 - [ ] Mục lục: chương đúng với tài liệu, bấm chương phát từ câu đầu, chương đang đọc được tô.
+- [ ] Đọc phân vai: chọn giọng nhân vật thì lời trong ngoặc kép đổi giọng, lời dẫn giữ giọng dẫn chuyện; tắt thì về một giọng; câu không có lời thoại không bị chậm hơn.
 - [ ] Nhạc nền: chọn/tắt/đổi âm lượng có hiệu lực ngay và được nhớ; chạy khi đọc, dừng khi tạm dừng. Chuông chỉ phát khi tự sang chương.
 - [ ] Hẹn giờ: đếm đúng, giảm âm lượng 10 giây cuối, tự dừng và lưu vị trí, âm lượng trở về 100%; chế độ hết chương dừng đúng ranh giới chương; đồng hồ không chạy lúc tạm dừng.
 - [ ] Đọc liền mạch cả một chương, không ngắt quãng giữa các câu (mock độ trễ 1 s).

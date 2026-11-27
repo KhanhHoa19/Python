@@ -479,3 +479,27 @@ def test_recommend_tab_asks_first_then_filters_and_shelves(app, admin_api, tmp_p
     tab._add(tab.books[0])
     pump(app)
     assert tab.books == []  # shelved: nothing left to suggest
+
+
+def test_logging_out_keeps_the_api_client_open_for_the_sign_in_window(app) -> None:
+    """After "Đăng xuất" the sign-in window reuses the same client (it loads the quick-login boxes with it)."""
+    app.logout()
+    assert app.logout_requested
+    assert app.ctx.api.me()["username"] == "tester"  # not closed: the window can still talk to the backend
+
+
+def test_dialogs_claim_the_keyboard_and_pick_files_through_one_helper(app, book, monkeypatch) -> None:
+    import tkinter
+
+    from ui.dialogs import UploadDialog
+
+    dialog = UploadDialog(app, app.ctx, lambda r: None)
+    calls: list[str] = []
+    monkeypatch.setattr(dialog, "lift", lambda: calls.append("lift"), raising=False)
+    monkeypatch.setattr(dialog, "focus_force", lambda: calls.append("focus_force"), raising=False)
+    dialog._claim_keyboard()  # nothing in this dialog has the keyboard (the stub reports no focus): take it
+    assert calls == ["lift", "focus_force"]
+    monkeypatch.setattr(tkinter.filedialog, "askopenfilename", lambda **kw: "/tmp/x.txt")
+    assert dialog.pick_file(title="t") == "/tmp/x.txt"
+    dialog._choose()  # the real handler goes through the same helper and fills the title from the file name
+    assert dialog.title_entry.get() == "X"

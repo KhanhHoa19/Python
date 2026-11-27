@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 
 def _load_dotenv() -> None:
     """Load KEY=VALUE pairs from the repo-level .env without overriding real environment."""
-    for candidate in (Path.cwd() / ".env", Path(__file__).resolve().parents[2] / ".env"):
+    candidates = [Path.cwd() / ".env", Path(__file__).resolve().parents[2] / ".env"]
+    if getattr(sys, "frozen", False):  # the packaged app: a .env next to the executable sets API_BASE_URL
+        candidates.insert(0, Path(sys.executable).resolve().parent / ".env")
+    for candidate in candidates:
         if not candidate.is_file():
             continue
         for line in candidate.read_text(encoding="utf-8").splitlines():

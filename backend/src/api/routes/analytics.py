@@ -17,6 +17,7 @@ from src.core.analytics.dashboard import (
     generate_latency_metrics_chart,
     generate_listening_trends_chart,
 )
+from src.core.analytics.stats import words_per_minute
 from src.core.auth.users import User
 from src.core.storage.db import get_db_engine
 from src.core.storage.repositories import (
@@ -101,4 +102,4 @@ def get_metrics(days: int = 7, user: User = Depends(current_user)) -> MetricsRes
     daily = SqlSessionRepository(engine, user.id).get_daily_stats(days)
     minutes = sum(d["minutes"] for d in daily)
     words = sum(d["words"] for d in daily)
-    return MetricsResponse(**latency, words_per_minute=round(words / minutes, 1) if minutes else 0.0)
+    return MetricsResponse(**latency, words_per_minute=words_per_minute(words, minutes))

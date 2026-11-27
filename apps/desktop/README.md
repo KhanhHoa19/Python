@@ -15,6 +15,18 @@ python main.py            # API_BASE_URL có thể đặt trong .env; mở ra l�
 
 Chưa có API TTS trả phí: chạy backend với `TTS_PROVIDER=mock` (WAV im lặng, có clone giả).
 
+## Đóng gói thành file chạy (PyInstaller)
+
+```bash
+cd apps/desktop
+pip install pyinstaller
+pyinstaller audiobook_tts.spec --noconfirm      # kết quả: dist/AudiobookTTS/ (khoảng 140 MB)
+printf 'API_BASE_URL=http://127.0.0.1:5000\n' > dist/AudiobookTTS/.env   # địa chỉ backend
+dist/AudiobookTTS/AudiobookTTS
+```
+Chạy được trên **đúng hệ điều hành đã build** (build trên Linux thì chạy trên Linux; muốn bản Windows phải build trên Windows).
+Vẫn cần backend đang chạy: app desktop chỉ là giao diện. Không cần cài Python hay thư viện trên máy chạy.
+
 ## Cấu trúc
 
 | Đường dẫn | Vai trò |

@@ -66,13 +66,45 @@ class ModalDialog(ctk.CTkToplevel):
         self.transient(master.winfo_toplevel())
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.after(150, self._grab)  # grabbing before the window is mapped fails on Linux
+        # A click anywhere in the dialog makes sure the dialog itself owns the keyboard (see `_claim_keyboard`).
+        self.bind("<Button-1>", lambda _e: self._claim_keyboard(), add="+")
 
     def _grab(self) -> None:
         try:
             self.grab_set()
-            self.focus_set()
+            self._claim_keyboard()
         except tk.TclError:
             pass
+
+    def _claim_keyboard(self) -> None:
+        """Give this dialog the keyboard if another window holds it.
+
+        On Linux a transient, grabbed window can lose the keyboard focus to its parent (after a file chooser closes,
+        or when the window manager does not hand it over): clicking into an entry then moves Tk's focus but the keys
+        still go to the other window, so nothing appears in the field."""
+        try:
+            holder = self.focus_get()
+            if holder is None or holder.winfo_toplevel() is not self:
+                self.lift()
+                self.focus_force()
+        except (tk.TclError, KeyError):
+            pass
+
+    def pick_file(self, **options: Any) -> str:
+        """`filedialog.askopenfilename` that hands the keyboard and the grab back to this dialog afterwards."""
+        from tkinter import filedialog
+
+        try:
+            return str(filedialog.askopenfilename(parent=self, **options) or "")
+        finally:
+            self.after(50, self._regain)
+
+    def _regain(self) -> None:
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+        self._claim_keyboard()
 
     def close(self) -> None:
         try:

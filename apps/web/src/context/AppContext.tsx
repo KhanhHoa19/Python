@@ -5,7 +5,7 @@ import { ResolvedTheme } from '../hooks/useTheme.ts';
 import { AppSettings } from '../types/settings.ts';
 import { Voice, VoiceList } from '../types/voice.ts';
 
-export type TabId = 'reader' | 'explore' | 'library' | 'quotes' | 'stats' | 'voices' | 'admin';
+export type TabId = 'reader' | 'explore' | 'recommend' | 'library' | 'quotes' | 'stats' | 'voices' | 'admin';
 
 export interface ReaderTarget {
   bookId: number;

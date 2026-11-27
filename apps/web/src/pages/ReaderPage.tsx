@@ -8,6 +8,7 @@ import { EmotionChips } from '../components/common/EmotionChips.tsx';
 import { NoteDialog } from '../components/Dialogs/NoteDialog.tsx';
 import { ChapterListDialog } from '../components/Dialogs/ChapterListDialog.tsx';
 import { listAmbient } from '../api/ambientApi.ts';
+import { updateSettings } from '../api/settingsApi.ts';
 import { AmbientDialog } from '../components/Dialogs/AmbientDialog.tsx';
 import { useAmbient } from '../hooks/useAmbient.ts';
 import { playChime } from '../lib/chime.ts';
@@ -104,7 +105,7 @@ interface ReaderBodyProps {
 }
 
 const ReaderBody: React.FC<ReaderBodyProps> = ({ bookId, title, sentences, chapters, initialIndex, savedVoice, visible, onChangeBook }) => {
-  const { settings, voices, voiceId, setVoiceId, openVoices, openQuotes, toast, showError } = useApp();
+  const { settings, applySettings, voices, voiceId, setVoiceId, openVoices, openQuotes, toast, showError } = useApp();
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Reopen the book with the voice it was last read with (if that voice still exists).
@@ -127,6 +128,7 @@ const ReaderBody: React.FC<ReaderBodyProps> = ({ bookId, title, sentences, chapt
     sentences,
     initialIndex,
     voice: voiceId,
+    characterVoice: settings?.character_voice,
     prefetchCount: settings?.prefetch_count ?? 2,
     initialSpeed: settings?.default_speed ?? 1,
     chapterChime: settings?.chapter_chime === false ? undefined : () => playChime(0.8),
@@ -143,6 +145,16 @@ const ReaderBody: React.FC<ReaderBodyProps> = ({ bookId, title, sentences, chapt
     window.addEventListener(PAUSE_EVENT, player.pause);
     return () => window.removeEventListener(PAUSE_EVENT, player.pause);
   }, [player.pause]);
+
+  const chooseCharacterVoice = async (voice: string) => {
+    if (!settings) return;
+    try {
+      applySettings(await updateSettings({ ...settings, character_voice: voice }));
+      toast(voice ? 'Đã bật đọc phân vai: lời thoại trong ngoặc kép sẽ đọc bằng giọng nhân vật.' : 'Đã tắt đọc phân vai.');
+    } catch (err) {
+      showError(err instanceof Error ? err.message : 'Không lưu được giọng nhân vật.');
+    }
+  };
 
   const openNote = useCallback(() => {
     const current = readSentenceSelection(containerRef.current);
@@ -213,7 +225,14 @@ const ReaderBody: React.FC<ReaderBodyProps> = ({ bookId, title, sentences, chapt
           )}
           <button className="btn-secondary" onClick={onChangeBook}>Đổi tài liệu</button>
           <label className="voice-picker">
-            <span>Giọng</span>
+            <span>Giọng nhân vật</span>
+            <select value={settings?.character_voice ?? ''} onChange={(e) => void chooseCharacterVoice(e.target.value)} aria-label="Giọng nhân vật">
+              <option value="">Một giọng (không phân vai)</option>
+              <VoiceOptions voices={voices} extraValue={settings?.character_voice || null} />
+            </select>
+          </label>
+          <label className="voice-picker">
+            <span>Giọng dẫn chuyện</span>
             <select
               value={voiceId ?? ''}
               onChange={(e) => (e.target.value === ADD_VOICE ? openVoices() : setVoiceId(e.target.value))}

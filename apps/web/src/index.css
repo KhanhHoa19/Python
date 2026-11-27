@@ -461,3 +461,12 @@ textarea { width: 100%; resize: vertical; }
 /* ---------- Topic tags of the library ---------- */
 .category-chips { margin-bottom: 1rem; }
 .chip.with-icon { display: inline-flex; align-items: center; gap: 0.35rem; }
+
+/* ---------- Gợi Ý (S12) ---------- */
+.recommend-page { display: flex; flex-direction: column; gap: 0.9rem; }
+.pref-panel { background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); padding: 1.1rem 1.25rem; display: flex; flex-direction: column; gap: 0.7rem; }
+.pref-panel h3 { font-size: 1.05rem; }
+.favorite-line { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.filter-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); align-self: center; min-width: 5.2rem; }
+.reason-list { list-style: none; display: flex; flex-direction: column; gap: 0.2rem; margin: 0.1rem 0 0.2rem; }
+.reason-list li { font-size: 0.8rem; color: var(--accent); display: flex; align-items: center; gap: 0.3rem; }

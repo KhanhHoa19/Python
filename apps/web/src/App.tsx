@@ -10,6 +10,7 @@ import { useTheme } from './hooks/useTheme.ts';
 import { mostRecentUnfinished } from './lib/books.ts';
 import { AdminPage } from './pages/AdminPage.tsx';
 import { ExplorePage } from './pages/ExplorePage.tsx';
+import { RecommendPage } from './pages/RecommendPage.tsx';
 import { QuotesPage } from './pages/QuotesPage.tsx';
 import { LibraryPage } from './pages/LibraryPage.tsx';
 import { ReaderPage } from './pages/ReaderPage.tsx';
@@ -181,6 +182,7 @@ export function App({ user, onLogout }: AppProps) {
         <main className="main-container">
           <section hidden={tab !== 'reader'} aria-label="Phòng Đọc"><ReaderPage target={readerTarget} visible={tab === 'reader'} /></section>
           <section hidden={tab !== 'explore'} aria-label="Khám Phá"><ExplorePage active={tab === 'explore'} library={library} /></section>
+          <section hidden={tab !== 'recommend'} aria-label="Gợi Ý"><RecommendPage active={tab === 'recommend'} library={library} /></section>
           <section hidden={tab !== 'library'} aria-label="Kệ Sách Của Tôi"><LibraryPage library={library} active={tab === 'library'} /></section>
           <section hidden={tab !== 'quotes'} aria-label="Trích Dẫn Yêu Thích"><QuotesPage active={tab === 'quotes'} library={library} bookId={quotesBook} onBookChange={setQuotesBook} /></section>
           <section hidden={tab !== 'stats'} aria-label="Thống Kê"><StatsPage active={tab === 'stats'} /></section>

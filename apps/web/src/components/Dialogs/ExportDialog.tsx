@@ -14,7 +14,7 @@ interface ExportDialogProps {
 
 /** S07 – Xuất audio. */
 export const ExportDialog: React.FC<ExportDialogProps> = ({ book, onClose }) => {
-  const { voiceId } = useApp();
+  const { voiceId, settings } = useApp();
   const [mode, setMode] = useState<'all' | 'range'>('all');
   const [from, setFrom] = useState('1');
   const [to, setTo] = useState(String(book.total_sentences));
@@ -60,7 +60,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({ book, onClose }) => 
     if (!r) return;
     setError(null);
     try {
-      setJob(await startExport(book.id, { from_index: r.from, to_index: r.to, voice: voiceId }));
+      setJob(await startExport(book.id, { from_index: r.from, to_index: r.to, voice: voiceId, dialogue_voice: settings?.character_voice || null }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không bắt đầu xuất được.');
     }

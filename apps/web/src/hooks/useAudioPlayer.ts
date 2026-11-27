@@ -14,6 +14,8 @@ export interface UseAudioPlayerOptions {
   sentences: BookSentence[];
   initialIndex: number;
   voice: string | null;
+  /** Voice of the dialogue (multi-voice narration); null/'' = the narrator reads everything. */
+  characterVoice?: string | null;
   prefetchCount: number;
   initialSpeed: number;
   /** Played (and awaited) before the first sentence of a new chapter when playback moves on by itself. */
@@ -39,6 +41,7 @@ interface Session {
  */
 export function useAudioPlayer(options: UseAudioPlayerOptions) {
   const { bookId, sentences, voice, prefetchCount } = options;
+  const characterVoice = options.characterVoice || null;
   const [index, setIndex] = useState(options.initialIndex);
   const [state, setState] = useState<PlayerState>('idle');
   const [speed, setSpeedState] = useState(options.initialSpeed);
@@ -240,7 +243,7 @@ export function useAudioPlayer(options: UseAudioPlayerOptions) {
   // Rebuild the buffer when the book or voice changes; never reuse audio from another voice.
   useEffect(() => {
     const prefetcher = new AudioPrefetcher(
-      (i, signal) => fetchSentenceAudio(bookId, i, voice, signal),
+      (i, signal) => fetchSentenceAudio(bookId, i, voice, signal, characterVoice),
       total,
       prefetchCount,
     );
@@ -249,19 +252,20 @@ export function useAudioPlayer(options: UseAudioPlayerOptions) {
       prefetcher.reset();
       prefetcherRef.current = null;
     };
-  }, [bookId, voice, total, prefetchCount]);
+  }, [bookId, voice, characterVoice, total, prefetchCount]);
 
   // A voice change while playing restarts the current sentence with the new voice.
-  const previousVoice = useRef(voice);
+  const voiceKey = `${voice ?? ''}|${characterVoice ?? ''}`; // narrator and character voice: a change of either restarts the sentence
+  const previousVoice = useRef(voiceKey);
   useEffect(() => {
-    if (previousVoice.current !== voice) {
-      previousVoice.current = voice;
+    if (previousVoice.current !== voiceKey) {
+      previousVoice.current = voiceKey;
       flushSession();
       if (live.current.state === 'playing' || live.current.state === 'loading') {
         void playIndex(live.current.index);
       }
     }
-  }, [voice, playIndex, flushSession]);
+  }, [voiceKey, playIndex, flushSession]);
 
   // New book: stop everything and move to its start position.
   useEffect(() => {

@@ -7,6 +7,8 @@ export interface SettingsUpdate {
   ambient_track?: number;
   ambient_volume?: number;
   chapter_chime?: boolean;
+  /** Voice of the dialogue in quotation marks ('' = one voice for everything). */
+  character_voice?: string;
 }
 
 export interface AppSettings extends SettingsUpdate {

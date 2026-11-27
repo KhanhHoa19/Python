@@ -1,5 +1,5 @@
 import React from 'react';
-import { BarChart2, BookOpen, Compass, Headphones, LogOut, Mic2, Monitor, Moon, Quote, Settings, ShieldCheck, Sun } from 'lucide-react';
+import { BarChart2, BookOpen, Compass, Headphones, LogOut, Mic2, Monitor, Moon, Quote, Settings, ShieldCheck, Sparkles, Sun } from 'lucide-react';
 import { TabId } from '../../context/AppContext.tsx';
 import { ThemePreference } from '../../hooks/useTheme.ts';
 import { avatarLetter } from '../../lib/session.ts';
@@ -18,6 +18,7 @@ interface SidebarProps {
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: 'reader', label: 'Phòng Đọc', icon: <Headphones size={19} /> },
   { id: 'explore', label: 'Khám Phá', icon: <Compass size={19} /> },
+  { id: 'recommend', label: 'Gợi Ý', icon: <Sparkles size={19} /> },
   { id: 'library', label: 'Kệ Sách Của Tôi', icon: <BookOpen size={19} /> },
   { id: 'quotes', label: 'Trích Dẫn Yêu Thích', icon: <Quote size={19} /> },
   { id: 'stats', label: 'Thống Kê', icon: <BarChart2 size={19} /> },

@@ -1,5 +1,6 @@
 export interface ExportRequest {
   from_index: number;
+  dialogue_voice?: string | null;
   to_index?: number | null;
   voice?: string | null;
   speed?: number;

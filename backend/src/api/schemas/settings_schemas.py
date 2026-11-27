@@ -14,6 +14,7 @@ class SettingsUpdateRequest(BaseModel):
     ambient_track: int | None = Field(default=None, ge=0)
     ambient_volume: float | None = Field(default=None, ge=0.0, le=1.0)
     chapter_chime: bool | None = None
+    character_voice: str | None = Field(default=None, max_length=255)  # "" switches multi-voice narration off
 
 
 class SettingsResponse(BaseModel):
@@ -24,5 +25,6 @@ class SettingsResponse(BaseModel):
     ambient_track: int = 0  # 0 = no background sound
     ambient_volume: float = 0.4
     chapter_chime: bool = True
+    character_voice: str = ""
     chars_used_today: int
     provider: str

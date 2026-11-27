@@ -81,6 +81,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> FastAPI:
     from src.api.routes.health import router as health_router
     from src.api.routes.notes import router as notes_router
     from src.api.routes.player import router as player_router
+    from src.api.routes.recommend import router as recommend_router
     from src.api.routes.settings import router as settings_router
     from src.api.routes.voices import router as voices_router
 
@@ -99,6 +100,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> FastAPI:
     app.include_router(settings_router, prefix="/api/settings", dependencies=signed_in)
     app.include_router(health_router, prefix="/api", dependencies=signed_in)
     app.include_router(export_router, prefix="/api", dependencies=signed_in)
+    app.include_router(recommend_router, prefix="/api/recommendations", dependencies=signed_in)
     app.include_router(admin_router, prefix="/api/admin", dependencies=signed_in)  # each route also needs role=admin
 
     return app

@@ -20,6 +20,7 @@ from src.core.app_settings import load_app_settings
 from src.core.auth.users import User
 from src.core.models.session import ReadingSession
 from src.core.player.audio_service import QuotaExceededError, get_or_create_audio
+from src.core.player.dialogue_audio import get_or_create_dialogue_audio, quote_states_for
 from src.core.storage.db import get_db_engine
 from src.core.storage.repositories import (
     SqlBookmarkRepository,
@@ -45,21 +46,21 @@ def _media_type(path: Path) -> str:
 @router.get("/audio/{book_id}/{sentence_index}")
 def stream_sentence_audio(
     book_id: int, sentence_index: int, speed: float = 1.0, voice: str | None = None,
-    user: User = Depends(current_user),
+    dialogue_voice: str | None = None, user: User = Depends(current_user),
 ) -> FileResponse:
-    """Stream synthesized MP3 audio for an indexed sentence."""
+    """Stream synthesized audio for an indexed sentence. With `dialogue_voice`, the lines inside quotation marks or after
+    a dialogue dash are read by that voice and the rest by `voice` (multi-voice narration)."""
     if speed < 0.5 or speed > 3.0:
         raise HTTPException(400, "Speed must be between 0.5 and 3.0")
 
     engine = get_db_engine()
     visible_book(engine, book_id, user)
     check_voice_access(engine, voice, user)
+    check_voice_access(engine, dialogue_voice, user)
     book_repo = SqlBookRepository(engine)
 
-    sentence = next(
-        (s for s in book_repo.get_book_sentences(book_id) if s.sentence_index == sentence_index),
-        None,
-    )
+    book_sentences = book_repo.get_book_sentences(book_id)
+    sentence = next((s for s in book_sentences if s.sentence_index == sentence_index), None)
     if not sentence:
         raise HTTPException(404, f"Sentence {sentence_index} not found for book {book_id}")
 
@@ -67,9 +68,13 @@ def stream_sentence_audio(
         SqlSettingsRepository(engine), SqlUserSettingsRepository(engine, user.id)
     ).default_voice
     try:
-        path, _ = get_or_create_audio(
-            get_db_engine(), book_id, sentence.text_content, voice_name, speed
-        )
+        if dialogue_voice:
+            path = get_or_create_dialogue_audio(
+                engine, book_id, sentence.text_content, quote_states_for(engine, book_id, book_sentences)[sentence_index],
+                voice_name, dialogue_voice, speed,
+            )
+        else:
+            path, _ = get_or_create_audio(get_db_engine(), book_id, sentence.text_content, voice_name, speed)
     except QuotaExceededError:
         raise
     except Exception as exc:

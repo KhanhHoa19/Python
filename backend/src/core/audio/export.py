@@ -6,6 +6,7 @@ import io
 import threading
 import uuid
 import wave
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from sqlalchemy import Engine
 from src.core.config import get_settings
 from src.core.models.book import BookSentence
 from src.core.player.audio_service import QuotaExceededError, get_or_create_audio
+from src.core.player.dialogue_audio import get_or_create_dialogue_audio, quote_states_for
 from src.core.tts.base import TTSProviderError
 
 
@@ -68,12 +70,12 @@ def _concat_wav(paths: list[Path]) -> bytes:
     return out.getvalue()
 
 
-def _audio_with_retry(engine: Engine, book_id: int, text: str, voice: str, speed: float) -> Path:
+def _audio_with_retry(make: Callable[[], Path]) -> Path:
     """One retry for transient provider errors (free TTS services drop requests now and then)."""
     try:
-        return get_or_create_audio(engine, book_id, text, voice, speed)[0]
+        return make()
     except TTSProviderError:
-        return get_or_create_audio(engine, book_id, text, voice, speed)[0]
+        return make()
 
 
 def run_export(
@@ -84,15 +86,23 @@ def run_export(
     speed: float,
     fmt: str | None,
     slug: str,
+    dialogue_voice: str | None = None,
 ) -> None:
     """Synthesize (or reuse cached) audio per sentence and write the merged file. Never raises."""
     try:
         paths: list[Path] = []
+        states = quote_states_for(engine, job.book_id) if dialogue_voice else {}
         for sentence in sentences:
             if job.cancel_requested.is_set():
                 job.status = "cancelled"
                 return
-            path = _audio_with_retry(engine, job.book_id, sentence.text_content, voice, speed)
+            def make(s: BookSentence = sentence) -> Path:
+                if dialogue_voice:
+                    return get_or_create_dialogue_audio(
+                        engine, job.book_id, s.text_content, states.get(s.sentence_index, False), voice, dialogue_voice, speed)
+                return get_or_create_audio(engine, job.book_id, s.text_content, voice, speed)[0]
+
+            path = _audio_with_retry(make)
             paths.append(path)
             job.done += 1
 

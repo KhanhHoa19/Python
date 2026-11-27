@@ -11,6 +11,7 @@ class ExportRequest(BaseModel):
     from_index: int = Field(default=0, ge=0)
     to_index: int | None = Field(default=None, ge=0)
     voice: str | None = None
+    dialogue_voice: str | None = None  # multi-voice narration: who reads the lines in quotation marks
     speed: float = Field(default=1.0, ge=0.5, le=3.0)
     format: Literal["wav", "mp3"] | None = None
 

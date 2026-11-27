@@ -99,11 +99,12 @@ def start_export(
     _, title, sentences = _select(book_id, req.from_index, req.to_index, user)
     engine = get_db_engine()
     check_voice_access(engine, req.voice, user)
+    check_voice_access(engine, req.dialogue_voice, user)
     voice = req.voice or load_app_settings(
         SqlSettingsRepository(engine), SqlUserSettingsRepository(engine, user.id)
     ).default_voice
     job = create_job(book_id, total=len(sentences), user_id=user.id)
-    background.add_task(run_export, engine, job, sentences, voice, req.speed, req.format, _slug(title))
+    background.add_task(run_export, engine, job, sentences, voice, req.speed, req.format, _slug(title), req.dialogue_voice)
     return _job_response(job)
 
 

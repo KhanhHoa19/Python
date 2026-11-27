@@ -12,7 +12,7 @@ from sqlalchemy import Engine
 from src.core.auth.security import create_access_token
 from src.core.auth.users import SqlUserRepository, User, jwt_secret
 
-ROUTE_MODULES = ["auth", "books", "categories", "player", "analytics", "voices", "notes", "settings", "export", "admin", "ambient"]
+ROUTE_MODULES = ["auth", "books", "categories", "player", "analytics", "voices", "notes", "settings", "export", "admin", "ambient", "recommend"]
 TESTER = "tester"
 
 

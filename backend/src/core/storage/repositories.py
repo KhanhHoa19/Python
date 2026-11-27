@@ -847,6 +847,66 @@ class SqlAmbientRepository:
             return conn.execute(text("DELETE FROM ambient_tracks WHERE id = :id"), {"id": track_id}).rowcount > 0
 
 
+# ------------------------------------------------------------------------------------------ recommendations
+
+class SqlRecommendRepository:
+    """What the recommendation engine reads: one reader's own history and the public catalogue's aggregate numbers."""
+
+    def __init__(self, engine: Engine, user_id: int):
+        self.engine = engine
+        self.user_id = user_id
+
+    @staticmethod
+    def _moment(value: Any) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        try:
+            return datetime.fromisoformat(str(value))
+        except ValueError:
+            return None
+
+    def history(self) -> list[dict[str, Any]]:
+        """The reader's shelf: category, status, favourite, completion and when they last read each book."""
+        with self.engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT b.category_id, p.status, p.is_favorite, p.completion_percentage, p.last_read_at "
+                "FROM user_book_progress p JOIN books b ON b.id = p.book_id WHERE p.user_id = :u"), {"u": self.user_id}).fetchall()
+        return [{"category_id": r[0], "status": r[1], "is_favorite": bool(r[2]), "completion": float(r[3] or 0),
+                 "last_read_at": self._moment(r[4])} for r in rows]
+
+    def minutes_by_category(self) -> dict[int, float]:
+        with self.engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT b.category_id, SUM(s.duration_seconds) FROM reading_sessions s JOIN books b ON b.id = s.book_id "
+                "WHERE s.user_id = :u AND b.category_id IS NOT NULL GROUP BY b.category_id"), {"u": self.user_id}).fetchall()
+        return {int(r[0]): float(r[1] or 0) / 60.0 for r in rows}
+
+    def listening_totals(self) -> tuple[int, float]:
+        """(words, seconds) over all the reader's sessions: their real listening speed."""
+        with self.engine.connect() as conn:
+            row = conn.execute(text(
+                "SELECT COALESCE(SUM(words_read), 0), COALESCE(SUM(duration_seconds), 0) FROM reading_sessions "
+                "WHERE user_id = :u"), {"u": self.user_id}).fetchone()
+        return (int(row[0]), float(row[1])) if row else (0, 0.0)
+
+    def session_count(self) -> int:
+        with self.engine.connect() as conn:
+            return int(conn.execute(text("SELECT COUNT(*) FROM reading_sessions WHERE user_id = :u"), {"u": self.user_id}).scalar() or 0)
+
+    def candidates(self) -> list[tuple[Book, int]]:
+        """Public books that are not yet on the reader's shelf, each with how many readers keep it (a count only)."""
+        cols = ", ".join(f"b.{c.strip()}" for c in SqlBookRepository._BOOK_COLS.split(","))
+        with self.engine.connect() as conn:
+            rows = conn.execute(text(
+                f"SELECT {cols}, (SELECT COUNT(*) FROM user_book_progress q WHERE q.book_id = b.id) "  # noqa: S608
+                "FROM books b WHERE b.is_public = 1 AND NOT EXISTS "
+                "(SELECT 1 FROM user_book_progress p WHERE p.book_id = b.id AND p.user_id = :u) ORDER BY b.id DESC"),
+                {"u": self.user_id}).fetchall()
+        return [(SqlBookRepository._book(r), int(r[15] or 0)) for r in rows]
+
+
 # ------------------------------------------------------------------------------------------ categories & shelf
 
 class SqlCategoryRepository:

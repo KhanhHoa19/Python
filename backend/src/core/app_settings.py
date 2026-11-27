@@ -17,6 +17,7 @@ class AppSettings:
     ambient_track: int = 0  # id of the background sound (0 = none)
     ambient_volume: float = 0.4
     chapter_chime: bool = True  # a short chime when playback moves on to the next chapter
+    character_voice: str = ""  # voice of the dialogue in quotation marks (multi-voice narration); "" = one voice
 
     def validate(self) -> None:
         if not 1 <= self.prefetch_count <= 5:
@@ -37,7 +38,7 @@ class AppSettings:
 
 
 # Per person: how they listen. System-wide (admin only): the daily character limit, which protects the TTS bill.
-USER_KEYS = ("prefetch_count", "default_speed", "default_voice", "ambient_track", "ambient_volume", "chapter_chime")
+USER_KEYS = ("prefetch_count", "default_speed", "default_voice", "ambient_track", "ambient_volume", "chapter_chime", "character_voice")
 
 
 def load_app_settings(repo: SqlSettingsRepository, user_repo: SqlUserSettingsRepository) -> AppSettings:
@@ -52,6 +53,7 @@ def load_app_settings(repo: SqlSettingsRepository, user_repo: SqlUserSettingsRep
         ambient_track=int(user_repo.get("ambient_track", "0") or 0),
         ambient_volume=float(user_repo.get("ambient_volume", str(defaults.ambient_volume)) or defaults.ambient_volume),
         chapter_chime=(user_repo.get("chapter_chime", "True") or "True") == "True",
+        character_voice=user_repo.get("character_voice", "") or "",
     )
 
 

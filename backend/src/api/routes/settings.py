@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import Engine
 
-from src.api.deps import current_user
+from src.api.deps import check_voice_access, current_user
 from src.api.schemas.settings_schemas import SettingsResponse, SettingsUpdateRequest
 from src.core.app_settings import AppSettings, load_app_settings, save_app_settings
 from src.core.auth.users import User
@@ -32,6 +32,7 @@ def _response(engine: Engine, user: User) -> SettingsResponse:
         ambient_track=current.ambient_track if SqlAmbientRepository(engine).get(current.ambient_track) else 0,
         ambient_volume=current.ambient_volume,
         chapter_chime=current.chapter_chime,
+        character_voice=current.character_voice,
         chars_used_today=repo.chars_used_today(),
         provider=TTSFactory.create_provider().provider_name,
     )
@@ -50,5 +51,6 @@ def update_app_settings(req: SettingsUpdateRequest, user: User = Depends(current
     new = AppSettings(**{**load_app_settings(repo, user_repo).as_dict(), **req.model_dump(exclude_none=True)})
     if new.ambient_track and SqlAmbientRepository(engine).get(new.ambient_track) is None:
         raise HTTPException(400, f"Unknown background sound {new.ambient_track}")
+    check_voice_access(engine, new.character_voice, user)  # someone else's private clone looks like a missing voice
     save_app_settings(repo, user_repo, new, can_set_limit=user.is_admin)
     return _response(engine, user)

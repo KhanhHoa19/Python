@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import time
 import wave
 from collections.abc import Generator
 from contextlib import ExitStack
@@ -21,7 +22,7 @@ from src.core.network.diagnostics import CheckResult
 from src.core.storage.repositories import SqlBookRepository, SqlTelemetryRepository
 from src.core.tts.base import TTSProviderError
 from src.core.tts.mock_adapter import MockProvider
-from tests.auth_helpers import TESTER_ID, sign_in, tester, use_engine, user_by_name
+from tests.auth_helpers import TESTER_ID, make_user, sign_in, tester, use_engine, user_by_name
 
 
 class NoCloneProvider(MockProvider):
@@ -549,3 +550,96 @@ def test_metrics_latency_and_success_rate(client: TestClient, test_engine: Engin
 def test_metrics_empty(client: TestClient) -> None:
     body = client.get("/api/analytics/metrics").json()
     assert body["total_calls"] == 0 and body["words_per_minute"] == 0.0
+
+
+# ---------------------------------------------------------------- multi-voice narration
+
+
+class _RecordingProvider(MockProvider):
+    """Remembers which voice spoke which text."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.spoken: list[tuple[str, str | None]] = []
+
+    def synthesize(self, text: str, voice: str | None = None, speed: float = 1.0):
+        self.spoken.append((text, voice))
+        return super().synthesize(text, voice, speed)
+
+
+def _wav_seconds(data: bytes) -> float:
+    with wave.open(io.BytesIO(data), "rb") as wav:
+        return wav.getnframes() / wav.getframerate()
+
+
+def test_dialogue_is_read_by_the_character_voice(client: TestClient, test_engine: Engine, tmp_path, monkeypatch) -> None:
+    from src.core.audio.dialogue import split_sentence
+
+    recorder = _RecordingProvider()
+    book_id = add_book(test_engine, ['Anh nói: "Đừng đi!" rồi quay đi.', "Trời mưa to.", "Cô cười."])
+    with patch("src.core.player.audio_service.TTSFactory") as factory, patch("src.core.player.dialogue_audio.active_provider", return_value=recorder):
+        factory.create_provider.return_value = recorder
+        mixed = client.get(f"/api/audio/{book_id}/0?voice=mock-vi-male&dialogue_voice=mock-vi-female")
+        plain = client.get(f"/api/audio/{book_id}/1?voice=mock-vi-male&dialogue_voice=mock-vi-female")
+    assert mixed.status_code == 200 and plain.status_code == 200
+    assert recorder.spoken[:3] == [("Anh nói:", "mock-vi-male"), ("Đừng đi!", "mock-vi-female"), ("rồi quay đi.", "mock-vi-male")]
+    assert recorder.spoken[3:] == [("Trời mưa to.", "mock-vi-male")]  # no dialogue: one ordinary narrator call, unchanged text
+    pieces = split_sentence('Anh nói: "Đừng đi!" rồi quay đi.')[0]
+    expected = sum(max(0.3, len(p.text.split()) / 2.5) for p in pieces)
+    assert abs(_wav_seconds(mixed.content) - expected) < 0.05  # the three pieces joined into one file
+
+
+def test_without_a_dialogue_voice_nothing_changes(client: TestClient, test_engine: Engine) -> None:
+    recorder = _RecordingProvider()
+    book_id = add_book(test_engine, ['Anh nói: "Đừng đi!" rồi quay đi.'])
+    with patch("src.core.player.audio_service.TTSFactory") as factory:
+        factory.create_provider.return_value = recorder
+        assert client.get(f"/api/audio/{book_id}/0?voice=mock-vi-male").status_code == 200
+    assert recorder.spoken == [('Anh nói: "Đừng đi!" rồi quay đi.', "mock-vi-male")]  # one voice, the whole sentence
+
+
+def test_a_second_request_for_the_same_pair_of_voices_comes_from_the_cache(client: TestClient, test_engine: Engine) -> None:
+    recorder = _RecordingProvider()
+    book_id = add_book(test_engine, ['Cô hỏi: "Ai đó?"'])
+    url = f"/api/audio/{book_id}/0?voice=mock-vi-male&dialogue_voice=mock-vi-female"
+    with patch("src.core.player.audio_service.TTSFactory") as factory, patch("src.core.player.dialogue_audio.active_provider", return_value=recorder):
+        factory.create_provider.return_value = recorder
+        client.get(url)
+        calls = len(recorder.spoken)
+        client.get(url)
+    assert calls == 2 and len(recorder.spoken) == calls
+
+
+def test_dialogue_voice_must_be_usable_by_the_caller(client: TestClient, test_engine: Engine) -> None:
+    from datetime import UTC, datetime
+
+    from src.core.storage.repositories import SqlVoiceRepository
+
+    other = make_user(test_engine, "other")
+    SqlVoiceRepository(test_engine).add_voice("secret-clone", "mock", "Của người khác", "vi", None, None, datetime.now(UTC), owner_id=other.id)
+    book_id = add_book(test_engine)
+    assert client.get(f"/api/audio/{book_id}/0?dialogue_voice=secret-clone").status_code == 404
+    assert client.put("/api/settings", json={**client.get("/api/settings").json(), "character_voice": "secret-clone"}).status_code == 404
+
+
+def test_character_voice_setting_roundtrip(client: TestClient) -> None:
+    base = {k: client.get("/api/settings").json()[k] for k in ("prefetch_count", "default_speed", "default_voice", "daily_char_limit")}
+    assert client.get("/api/settings").json()["character_voice"] == ""  # off until chosen
+    assert client.put("/api/settings", json={**base, "character_voice": "mock-vi-female"}).json()["character_voice"] == "mock-vi-female"
+    assert client.put("/api/settings", json={**base, "default_speed": 1.25}).json()["character_voice"] == "mock-vi-female"  # an older client leaves it alone
+    assert client.put("/api/settings", json={**base, "character_voice": ""}).json()["character_voice"] == ""  # "" switches it off
+
+
+def test_export_uses_the_same_two_voices(client: TestClient, test_engine: Engine) -> None:
+    recorder = _RecordingProvider()
+    book_id = add_book(test_engine, ['Cô hỏi: "Ai đó?" Rồi im.'])
+    with patch("src.core.player.audio_service.TTSFactory") as factory, patch("src.core.player.dialogue_audio.active_provider", return_value=recorder):
+        factory.create_provider.return_value = recorder
+        job = client.post(f"/api/books/{book_id}/export", json={"voice": "mock-vi-male", "dialogue_voice": "mock-vi-female", "format": "wav"}).json()
+        for _ in range(100):
+            status = client.get(f"/api/exports/{job['job_id']}").json()
+            if status["status"] != "running":
+                break
+            time.sleep(0.05)
+    assert status["status"] == "done"
+    assert ("Ai đó?", "mock-vi-female") in recorder.spoken and ("Cô hỏi:", "mock-vi-male") in recorder.spoken

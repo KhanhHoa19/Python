@@ -50,6 +50,7 @@ def main() -> None:
         api.set_token(None)
         auth_store.clear()
         session = None
+    api.close()
 
 
 if __name__ == "__main__":

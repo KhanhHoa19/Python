@@ -370,6 +370,7 @@ class App(ctk.CTk):
         flusher.join(timeout=4.0)
         try:
             self.ctx.output.close()
-            self.ctx.api.close()
+            if not self.logout_requested:  # after "Đăng xuất" the sign-in window reuses this client (quick-login boxes)
+                self.ctx.api.close()
         finally:
             self.destroy()

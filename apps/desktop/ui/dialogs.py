@@ -90,8 +90,8 @@ class UploadDialog(ModalDialog):
         self.upload_btn.pack(side="left")
 
     def _choose(self) -> None:
-        chosen = filedialog.askopenfilename(
-            parent=self, title="Chọn tài liệu",
+        chosen = self.pick_file(
+            title="Chọn tài liệu",
             filetypes=[("Tài liệu", "*.pdf *.docx *.txt *.md"), ("Tất cả", "*.*")],
         )
         if not chosen:
@@ -104,7 +104,7 @@ class UploadDialog(ModalDialog):
         self.status.configure(text="")
 
     def _choose_cover(self) -> None:
-        chosen = filedialog.askopenfilename(parent=self, title="Chọn ảnh bìa",
+        chosen = self.pick_file(title="Chọn ảnh bìa",
                                             filetypes=[("Ảnh JPEG/PNG", "*.jpg *.jpeg *.png"), ("Tất cả", "*.*")])
         if not chosen:
             return
@@ -277,8 +277,8 @@ class CloneVoiceDialog(ModalDialog):
         self.create_btn.pack(side="left")
 
     def _choose(self) -> None:
-        chosen = filedialog.askopenfilename(
-            parent=self, title="Chọn file mẫu", filetypes=[("Audio", "*.wav *.mp3 *.m4a *.ogg")])
+        chosen = self.pick_file(
+            title="Chọn file mẫu", filetypes=[("Audio", "*.wav *.mp3 *.m4a *.ogg")])
         if chosen:
             self.sample = Path(chosen)
             self.file_label.configure(text=self.sample.name)
@@ -601,7 +601,7 @@ class EditBookDialog(ModalDialog):
         self.after(200, lambda: (self.entry.focus_set(), self.entry.select_range(0, "end")))
 
     def _choose_cover(self) -> None:
-        chosen = filedialog.askopenfilename(parent=self, title="Chọn ảnh bìa",
+        chosen = self.pick_file(title="Chọn ảnh bìa",
                                             filetypes=[("Ảnh JPEG/PNG", "*.jpg *.jpeg *.png"), ("Tất cả", "*.*")])
         if not chosen:
             return
@@ -817,6 +817,7 @@ class ExportDialog(ModalDialog):
         name = getattr(self, "file_name", "audiobook.wav")
         target = filedialog.asksaveasfilename(
             parent=self, initialfile=name, defaultextension=Path(name).suffix)
+        self.after(50, self._regain)  # the keyboard and the grab come back to this dialog
         if not target or not self.job_id:
             return
         job_id = self.job_id
@@ -933,7 +934,7 @@ class AddAmbientDialog(ModalDialog):
         self.add_btn.pack(side="left")
 
     def _choose(self) -> None:
-        chosen = filedialog.askopenfilename(parent=self, title="Chọn file âm thanh",
+        chosen = self.pick_file(title="Chọn file âm thanh",
                                             filetypes=[("Âm thanh", "*.mp3 *.ogg *.wav *.m4a")])
         if not chosen:
             return

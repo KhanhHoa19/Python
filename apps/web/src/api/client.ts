@@ -27,14 +27,29 @@ export class ApiError extends Error {
   }
 }
 
+let authToken: string | null = null;
+let unauthorizedHandler: (() => void) | null = null;
+
+/** The token sent with every request (null = signed out). */
+export function setAuthToken(token: string | null): void {
+  authToken = token;
+}
+
+/** Called when the backend answers 401 to a request that carried a token (expired or revoked session). */
+export function onUnauthorized(handler: (() => void) | null): void {
+  unauthorizedHandler = handler;
+}
+
 function url(endpoint: string): string {
   return `${API_BASE}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
 }
 
 async function request(input: string, init?: RequestInit): Promise<Response> {
   let res: Response;
+  const headers = new Headers(init?.headers);
+  if (authToken) headers.set('Authorization', `Bearer ${authToken}`);
   try {
-    res = await fetch(input, init);
+    res = await fetch(input, { ...init, headers });
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') throw err;
     throw new ApiError(0, 'Không kết nối được máy chủ.');
@@ -49,6 +64,8 @@ async function request(input: string, init?: RequestInit): Promise<Response> {
     } catch {
       // Non-JSON error body
     }
+    // A wrong password on the sign-in form is also a 401, but that is not an expired session.
+    if (res.status === 401 && authToken && !input.includes('/auth/')) unauthorizedHandler?.();
     throw new ApiError(res.status, message, details);
   }
   return res;
@@ -104,8 +121,8 @@ export async function apiDelete(endpoint: string): Promise<void> {
   await request(url(endpoint), { method: 'DELETE' });
 }
 
-export async function apiUpload<T>(endpoint: string, formData: FormData): Promise<T> {
-  return parseJson<T>(await request(url(endpoint), { method: 'POST', headers: { Accept: 'application/json' }, body: formData }));
+export async function apiUpload<T>(endpoint: string, formData: FormData, method: 'POST' | 'PUT' = 'POST'): Promise<T> {
+  return parseJson<T>(await request(url(endpoint), { method, headers: { Accept: 'application/json' }, body: formData }));
 }
 
 /** Absolute-path URL for a file endpoint (used for `<a download>`). */

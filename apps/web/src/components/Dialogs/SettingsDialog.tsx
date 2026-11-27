@@ -23,7 +23,8 @@ const ICONS = { idle: '·', running: '⏳', ok: '✔', fail: '✖' };
 
 /** S05 – Kết nối & Cài đặt. API key stays in the backend's .env and is never shown here. */
 export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
-  const { settings, voices, applySettings, refreshSettings, toast } = useApp();
+  const { user, settings, voices, applySettings, refreshSettings, toast } = useApp();
+  const limitLocked = user.role !== 'admin'; // the limit is shared by everyone: only an admin changes it
   const [prefetch, setPrefetch] = useState(String(settings?.prefetch_count ?? 2));
   const [speed, setSpeed] = useState(String(settings?.default_speed ?? 1));
   const [voice, setVoice] = useState(settings?.default_voice ?? '');
@@ -116,8 +117,8 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ onClose }) => {
           </select>
           <label htmlFor="set-limit">Giới hạn ký tự/ngày</label>
           <span>
-            <input id="set-limit" className="number-input wide" inputMode="numeric" value={limit} onChange={(e) => setLimit(e.target.value)} />{' '}
-            <span className="muted">(0 = không giới hạn)</span>
+            <input id="set-limit" className="number-input wide" inputMode="numeric" value={limit} disabled={limitLocked} onChange={(e) => setLimit(e.target.value)} />{' '}
+            <span className="muted">{limitLocked ? '(chỉ quản trị viên thay đổi)' : '(0 = không giới hạn)'}</span>
           </span>
         </div>
         <p className="muted">Đã dùng hôm nay: {formatNumber(used)} ký tự{limitNow > 0 && ` / ${formatNumber(limitNow)}`}</p>

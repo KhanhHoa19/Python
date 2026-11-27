@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterAndSortBooks, mostRecentUnfinished } from './books.ts';
+import { checkBookTitle, mostRecentUnfinished, progressFraction } from './books.ts';
 import { formatMinutes, formatNumber, normalizeText, parseIso, usageRatio } from './format.ts';
 import { describeVoice } from './voices.ts';
 import { BookWithProgress } from '../types/book.ts';
@@ -7,7 +7,7 @@ import { BookWithProgress } from '../types/book.ts';
 function book(title: string, pct?: number, last?: string, created = '2026-01-01T00:00:00', author = ''): BookWithProgress {
   return {
     id: 1, title, author, total_chapters: 1, total_sentences: 10, total_words: 100, created_at: created,
-    bookmark: pct === undefined ? null : { book_id: 1, current_chapter: 1, current_sentence_index: 0, completion_percentage: pct, last_read_at: last ?? null },
+    progress: pct === undefined ? null : { status: pct >= 100 ? 'completed' : 'reading', is_favorite: false, current_chapter: 1, current_sentence_index: 0, completion_percentage: pct, last_read_at: last ?? null, voice: null },
   };
 }
 
@@ -37,19 +37,10 @@ describe('format', () => {
 });
 
 describe('books', () => {
-  it('search ignores accents and matches author', () => {
-    const books = [book('Cấu trúc dữ liệu'), book('Giáo trình Python', undefined, undefined, undefined, 'Nguyễn Văn An')];
-    expect(filterAndSortBooks(books, 'cau truc', 'Tên A→Z').map((b) => b.title)).toEqual(['Cấu trúc dữ liệu']);
-    expect(filterAndSortBooks(books, 'van an', 'Tên A→Z')).toHaveLength(1);
-  });
-  it('sorts by recent with unread last', () => {
-    const books = [book('never'), book('old', 10, '2026-01-02T10:00:00'), book('new', 10, '2026-03-02T10:00:00')];
-    expect(filterAndSortBooks(books, '', 'Đọc gần đây').map((b) => b.title)).toEqual(['new', 'old', 'never']);
-  });
-  it('sorts by progress and added date', () => {
-    const books = [book('a', 10, undefined, '2026-01-01T00:00:00'), book('b', 90, undefined, '2026-02-01T00:00:00')];
-    expect(filterAndSortBooks(books, '', 'Tiến độ')[0].title).toBe('b');
-    expect(filterAndSortBooks(books, '', 'Ngày thêm')[0].title).toBe('b');
+  it('turns progress into a fraction between 0 and 1', () => {
+    expect(progressFraction(book('a'))).toBe(0);
+    expect(progressFraction(book('a', 42.5))).toBeCloseTo(0.425);
+    expect(progressFraction(book('a', 180))).toBe(1);
   });
   it('resumes the most recent unfinished book', () => {
     const books = [book('new'), book('done', 100, '2026-05-01T00:00:00'), book('a', 20, '2026-02-01T00:00:00'), book('b', 50, '2026-04-01T00:00:00')];
@@ -63,5 +54,18 @@ describe('voices', () => {
     const v = { voice_id: 'x', display_name: 'Hoài My', provider: 'p', language: 'vi', gender: 'female', style: 'kể chuyện', is_custom: false, consent_at: null };
     expect(describeVoice(v)).toBe('Hoài My · Nữ · kể chuyện');
     expect(describeVoice({ ...v, is_custom: true, style: null, gender: null })).toBe('Hoài My · Giọng của tôi');
+  });
+});
+
+describe('checkBookTitle', () => {
+  it('trims and collapses whitespace', () => {
+    expect(checkBookTitle('  Sherlock   Holmes \n tập một ')).toEqual({ ok: true, title: 'Sherlock Holmes tập một' });
+  });
+  it('rejects empty and whitespace-only titles', () => {
+    for (const raw of ['', '   ', '\n\t']) expect(checkBookTitle(raw)).toMatchObject({ ok: false });
+  });
+  it('allows exactly 255 characters and rejects 256', () => {
+    expect(checkBookTitle('ế'.repeat(255))).toMatchObject({ ok: true });
+    expect(checkBookTitle('ế'.repeat(256))).toMatchObject({ ok: false });
   });
 });

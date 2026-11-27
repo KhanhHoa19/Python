@@ -1,11 +1,8 @@
 import { BookWithProgress } from '../types/book.ts';
-import { normalizeText, parseIso } from './format.ts';
-
-export const SORT_OPTIONS = ['Đọc gần đây', 'Tên A→Z', 'Ngày thêm', 'Tiến độ'] as const;
-export type SortOption = (typeof SORT_OPTIONS)[number];
+import { parseIso } from './format.ts';
 
 export function progressFraction(book: BookWithProgress): number {
-  const pct = book.bookmark?.completion_percentage ?? 0;
+  const pct = book.progress?.completion_percentage ?? 0;
   return Math.min(Math.max(pct / 100, 0), 1);
 }
 
@@ -13,27 +10,24 @@ function time(value: string | null | undefined): number {
   return parseIso(value)?.getTime() ?? 0;
 }
 
-export function filterAndSortBooks(books: BookWithProgress[], query: string, sort: SortOption): BookWithProgress[] {
-  const needle = normalizeText(query.trim());
-  const items = books.filter((b) => normalizeText(`${b.title} ${b.author}`).includes(needle));
-  switch (sort) {
-    case 'Tên A→Z':
-      return items.sort((a, b) => normalizeText(a.title).localeCompare(normalizeText(b.title)));
-    case 'Ngày thêm':
-      return items.sort((a, b) => time(b.created_at) - time(a.created_at));
-    case 'Tiến độ':
-      return items.sort((a, b) => progressFraction(b) - progressFraction(a));
-    default:
-      return items.sort((a, b) => time(b.bookmark?.last_read_at) - time(a.bookmark?.last_read_at));
-  }
-}
-
-/** The book to resume on startup: read before (0 < progress < 100%), latest read first. */
+/** The book to resume on startup: being read (0 < progress < 100%), most recently read first. */
 export function mostRecentUnfinished(books: BookWithProgress[]): BookWithProgress | null {
   const candidates = books.filter((b) => {
     const p = progressFraction(b);
-    return p > 0 && p < 1 && !!b.bookmark?.last_read_at;
+    return p > 0 && p < 1 && !!b.progress?.last_read_at;
   });
   if (!candidates.length) return null;
-  return candidates.reduce((best, b) => (time(b.bookmark?.last_read_at) > time(best.bookmark?.last_read_at) ? b : best));
+  return candidates.reduce((best, b) => (time(b.progress?.last_read_at) > time(best.progress?.last_read_at) ? b : best));
+}
+
+export const MAX_TITLE_LENGTH = 255;
+
+export type TitleCheck = { ok: true; title: string } | { ok: false; error: string };
+
+/** Same rules as the backend: trim, collapse inner whitespace, 1-255 characters. */
+export function checkBookTitle(raw: string): TitleCheck {
+  const title = raw.split(/\s+/).filter(Boolean).join(' ');
+  if (!title) return { ok: false, error: 'Tên không được để trống.' };
+  if (title.length > MAX_TITLE_LENGTH) return { ok: false, error: `Tên tối đa ${MAX_TITLE_LENGTH} ký tự.` };
+  return { ok: true, title };
 }

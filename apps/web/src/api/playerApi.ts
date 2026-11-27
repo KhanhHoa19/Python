@@ -6,7 +6,7 @@ export async function fetchBookmark(bookId: number): Promise<Bookmark> {
 }
 
 export async function saveBookmark(
-  payload: { book_id: number; current_chapter: number; current_sentence_index: number; completion_percentage: number },
+  payload: { book_id: number; current_chapter: number; current_sentence_index: number; completion_percentage: number; voice?: string | null },
   keepalive = false,
 ): Promise<void> {
   await apiPost('/bookmarks', payload, { keepalive });

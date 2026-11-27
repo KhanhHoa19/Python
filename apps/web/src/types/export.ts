@@ -18,7 +18,7 @@ export interface ExportEstimate {
 
 export interface ExportJob {
   job_id: string;
-  status: 'running' | 'done' | 'failed';
+  status: 'running' | 'done' | 'failed' | 'cancelled';
   done: number;
   total: number;
   file_name: string | null;

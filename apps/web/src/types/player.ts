@@ -4,6 +4,8 @@ export interface Bookmark {
   current_sentence_index: number;
   completion_percentage: number;
   last_read_at: string | null;
+  /** Voice last used for this book (null until one was saved). */
+  voice: string | null;
 }
 
 export interface ReadingSessionPayload {
@@ -13,6 +15,7 @@ export interface ReadingSessionPayload {
   words_read: number;
   start_time: string;
   end_time: string;
+  voice?: string | null;
 }
 
 export type PlayerState = 'idle' | 'loading' | 'playing' | 'paused' | 'finished';

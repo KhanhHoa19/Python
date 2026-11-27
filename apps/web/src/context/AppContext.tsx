@@ -1,8 +1,11 @@
 import { createContext, useContext } from 'react';
+import { Category } from '../types/book.ts';
+import { AuthUser } from '../types/auth.ts';
+import { ResolvedTheme } from '../hooks/useTheme.ts';
 import { AppSettings } from '../types/settings.ts';
 import { Voice, VoiceList } from '../types/voice.ts';
 
-export type TabId = 'reader' | 'library' | 'stats';
+export type TabId = 'reader' | 'explore' | 'library' | 'quotes' | 'stats' | 'voices' | 'admin';
 
 export interface ReaderTarget {
   bookId: number;
@@ -14,7 +17,16 @@ export interface ReaderTarget {
 }
 
 export interface AppContextValue {
+  /** The signed-in account. */
+  user: AuthUser;
+  logout: () => void;
   settings: AppSettings | null;
+  categories: Category[];
+  /** The category chosen in the sidebar (its slug), or null for all. Filters Khám phá and the shelf. */
+  category: string | null;
+  setCategory: (slug: string | null) => void;
+  /** Light or dark, after resolving "follow the system" (charts read their colours for it). */
+  theme: ResolvedTheme;
   voiceList: VoiceList | null;
   voices: Voice[];
   voiceId: string | null;
@@ -26,8 +38,13 @@ export interface AppContextValue {
   showError: (message: string) => void;
   openInReader: (bookId: number, title: string, startIndex?: number) => void;
   goTo: (tab: TabId) => void;
+  /** Open Trích dẫn yêu thích, optionally limited to one book. */
+  openQuotes: (bookId?: number) => void;
   openSettings: () => void;
+  /** Open Kho Giọng Đọc. */
   openVoices: () => void;
+  /** Replace the sidebar's category list (after an admin changed it). */
+  refreshCategories: (categories: Category[]) => void;
 }
 
 export const AppContext = createContext<AppContextValue | null>(null);

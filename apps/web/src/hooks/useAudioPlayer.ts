@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '../api/client.ts';
 import { fetchSentenceAudio, recordReadingSession, saveBookmark } from '../api/playerApi.ts';
 import { AudioPrefetcher } from '../lib/audioPrefetcher.ts';
+import { startsNewChapter } from '../lib/chime.ts';
+import { FADE_SECONDS, SleepSetting, fadeVolume, isLastOfChapter } from '../lib/sleepTimer.ts';
 import { BookSentence } from '../types/book.ts';
 import { PlayerState } from '../types/player.ts';
 
@@ -14,6 +16,8 @@ export interface UseAudioPlayerOptions {
   voice: string | null;
   prefetchCount: number;
   initialSpeed: number;
+  /** Played (and awaited) before the first sentence of a new chapter when playback moves on by itself. */
+  chapterChime?: () => Promise<void>;
   onWarning: (message: string) => void;
   onError: (message: string) => void;
 }
@@ -23,6 +27,7 @@ interface Session {
   seconds: number;
   sentences: number;
   words: number;
+  voice: string | null; // a session belongs to one voice
 }
 
 /**
@@ -51,6 +56,19 @@ export function useAudioPlayer(options: UseAudioPlayerOptions) {
   const session = useRef<Session | null>(null);
   const lastBookmarkAt = useRef(0);
 
+  // Sleep timer: the countdown only runs while playing; see lib/sleepTimer.ts for the rules.
+  const [sleep, setSleepState] = useState<SleepSetting | null>(null);
+  const [sleepLeft, setSleepLeft] = useState<number | null>(null);
+  const sleepRef = useRef<{ setting: SleepSetting; remaining: number; last: number } | null>(null);
+
+  const setSleep = useCallback((setting: SleepSetting | null) => {
+    if (audioRef.current) audioRef.current.volume = 1; // cancelling (or re-arming) always restores the volume
+    const seconds = setting?.kind === 'minutes' ? setting.minutes * 60 : 0;
+    sleepRef.current = setting ? { setting, remaining: seconds, last: performance.now() } : null;
+    setSleepState(setting);
+    setSleepLeft(setting?.kind === 'minutes' ? seconds : null);
+  }, []);
+
   const total = sentences.length;
 
   // ---- reporting -------------------------------------------------------------------------
@@ -65,6 +83,7 @@ export function useAudioPlayer(options: UseAudioPlayerOptions) {
         current_chapter: current[i].chapter_index || 1,
         current_sentence_index: i,
         completion_percentage: Number((((i + 1) / current.length) * 100).toFixed(1)),
+        voice: live.current.voice,
       },
       keepalive,
     ).catch(() => undefined);
@@ -82,6 +101,7 @@ export function useAudioPlayer(options: UseAudioPlayerOptions) {
         duration_seconds: Math.max(1, Math.round(s.seconds)),
         sentences_read: s.sentences,
         words_read: s.words,
+        voice: s.voice,
       },
       keepalive,
     ).catch(() => undefined);
@@ -134,7 +154,7 @@ export function useAudioPlayer(options: UseAudioPlayerOptions) {
       }
       if (gen !== generation.current) return;
 
-      if (!session.current) session.current = { start: new Date(), seconds: 0, sentences: 0, words: 0 };
+      if (!session.current) session.current = { start: new Date(), seconds: 0, sentences: 0, words: 0, voice: live.current.voice };
       audio.src = url;
       loadedIndex.current = target;
       audio.defaultPlaybackRate = live.current.speed;
@@ -180,8 +200,27 @@ export function useAudioPlayer(options: UseAudioPlayerOptions) {
         s.words += live.current.sentences[i]?.word_count ?? 0;
         s.seconds += Number.isFinite(audio.duration) ? audio.duration / (audio.playbackRate || 1) : 0;
       }
+      if (sleepRef.current?.setting.kind === 'chapter' && isLastOfChapter(live.current.sentences, i)) {
+        // "Dừng khi hết chương này": stop on the first sentence of the next chapter, ready to resume.
+        const more = i + 1 < live.current.sentences.length;
+        loadedIndex.current = null;
+        if (more) setIndex(i + 1);
+        setState(more ? 'paused' : 'finished');
+        flushSession();
+        saveProgress(more ? i + 1 : i);
+        setSleep(null);
+        live.current.onWarning('Đã dừng hết chương theo hẹn giờ.');
+        return;
+      }
       if (i + 1 < live.current.sentences.length) {
-        void playIndex(i + 1);
+        const chime = live.current.chapterChime;
+        if (chime && startsNewChapter(live.current.sentences, i + 1)) {
+          void chime().then(() => {
+            if (live.current.state === 'playing' && loadedIndex.current === i) void playIndex(i + 1); // not paused or moved meanwhile
+          });
+        } else {
+          void playIndex(i + 1);
+        }
       } else {
         setState('finished');
         flushSession();
@@ -196,7 +235,7 @@ export function useAudioPlayer(options: UseAudioPlayerOptions) {
       audio.removeAttribute('src');
       audioRef.current = null;
     };
-  }, [flushSession, playIndex, saveProgress]);
+  }, [flushSession, playIndex, saveProgress, setSleep]);
 
   // Rebuild the buffer when the book or voice changes; never reuse audio from another voice.
   useEffect(() => {
@@ -217,11 +256,12 @@ export function useAudioPlayer(options: UseAudioPlayerOptions) {
   useEffect(() => {
     if (previousVoice.current !== voice) {
       previousVoice.current = voice;
+      flushSession();
       if (live.current.state === 'playing' || live.current.state === 'loading') {
         void playIndex(live.current.index);
       }
     }
-  }, [voice, playIndex]);
+  }, [voice, playIndex, flushSession]);
 
   // New book: stop everything and move to its start position.
   useEffect(() => {
@@ -265,12 +305,43 @@ export function useAudioPlayer(options: UseAudioPlayerOptions) {
     saveProgress(live.current.index);
   }, [flushSession, saveProgress, stopAudio]);
 
+  // Countdown, fade-out and the pause when time is up.
+  useEffect(() => {
+    if (!sleep) return;
+    const timer = window.setInterval(() => {
+      const state = sleepRef.current;
+      const audio = audioRef.current;
+      if (!state || !audio) return;
+      const now = performance.now();
+      const elapsed = (now - state.last) / 1000;
+      state.last = now;
+      const playing = live.current.state === 'playing';
+      if (state.setting.kind === 'minutes') {
+        if (playing) state.remaining -= elapsed;
+        audio.volume = fadeVolume(state.remaining);
+        setSleepLeft(Math.max(0, state.remaining));
+        if (state.remaining <= 0) {
+          pause();
+          setSleep(null); // restores the volume for the next listen
+          live.current.onWarning('Hết giờ hẹn: đã tạm dừng.');
+        }
+      } else if (playing && isLastOfChapter(live.current.sentences, live.current.index) && audio.duration > 0) {
+        const rate = audio.playbackRate || 1;
+        const length = audio.duration / rate;
+        audio.volume = fadeVolume(length - audio.currentTime / rate, Math.min(FADE_SECONDS, length));
+      } else {
+        audio.volume = 1;
+      }
+    }, 200);
+    return () => window.clearInterval(timer);
+  }, [sleep, pause, setSleep]);
+
   const play = useCallback(() => {
     const audio = audioRef.current;
     if (!total) return;
     if (live.current.state === 'paused' && audio && loadedIndex.current === live.current.index && audio.src) {
       generation.current += 1;
-      if (!session.current) session.current = { start: new Date(), seconds: 0, sentences: 0, words: 0 };
+      if (!session.current) session.current = { start: new Date(), seconds: 0, sentences: 0, words: 0, voice: live.current.voice };
       audio
         .play()
         .then(() => setState('playing'))
@@ -304,6 +375,15 @@ export function useAudioPlayer(options: UseAudioPlayerOptions) {
     [playIndex, saveProgress, stopAudio, total],
   );
 
+  /** Jump to a sentence and start playing there (chapter list): old audio is dropped, playback starts at once. */
+  const playFrom = useCallback(
+    (target: number) => {
+      if (!total) return;
+      void playIndex(Math.min(Math.max(target, 0), total - 1));
+    },
+    [playIndex, total],
+  );
+
   const next = useCallback(() => seek(live.current.index + 1), [seek]);
   const previous = useCallback(() => seek(live.current.index - 1), [seek]);
 
@@ -317,5 +397,5 @@ export function useAudioPlayer(options: UseAudioPlayerOptions) {
     }
   }, []);
 
-  return { index, state, speed, latencyMs, buffered, toggle, play, pause, seek, next, previous, setSpeed };
+  return { index, state, speed, latencyMs, buffered, sleep, sleepLeft, setSleep, toggle, play, pause, seek, playFrom, next, previous, setSpeed };
 }

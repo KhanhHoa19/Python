@@ -1,4 +1,4 @@
-import { apiGet, apiPost, fileUrl } from './client.ts';
+import { apiDelete, apiGet, apiGetBlob, apiPost } from './client.ts';
 import { ExportEstimate, ExportJob, ExportRequest } from '../types/export.ts';
 
 export async function estimateExport(
@@ -22,6 +22,12 @@ export async function getExportJob(jobId: string): Promise<ExportJob> {
   return apiGet<ExportJob>(`/exports/${jobId}`);
 }
 
-export function exportFileUrl(jobId: string): string {
-  return fileUrl(`/exports/${jobId}/file`);
+/** Ask the backend to stop a running export; the job then reports status "cancelled". */
+export async function cancelExport(jobId: string): Promise<void> {
+  await apiDelete(`/exports/${jobId}`);
+}
+
+/** The finished file. Fetched with the sign-in token (a plain link could not carry it). */
+export async function downloadExport(jobId: string): Promise<Blob> {
+  return apiGetBlob(`/exports/${jobId}/file`);
 }

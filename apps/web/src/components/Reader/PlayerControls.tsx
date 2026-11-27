@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronLeft, ChevronRight, Loader2, Pause, Play, SkipBack, SkipForward } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, Music2, Pause, Play, SkipBack, SkipForward, Timer } from 'lucide-react';
 import { formatNumber } from '../../lib/format.ts';
 import { PlayerState, SPEED_LEVELS } from '../../types/player.ts';
 
@@ -14,6 +14,16 @@ interface PlayerControlsProps {
   onToggle: () => void;
   onSeek: (index: number) => void;
   onSpeed: (speed: number) => void;
+  /** Text of the sleep-timer button ('Hẹn giờ', '12:30', 'Hết chương') and whether a timer is running. */
+  /** Title of the chapter being read (empty when the book has a single chapter). */
+  chapterTitle: string;
+  sleepLabel: string;
+  sleepActive: boolean;
+  /** Background-sound button: its label and whether a sound is on. */
+  ambientLabel: string;
+  ambientActive: boolean;
+  onAmbient: () => void;
+  onSleep: () => void;
 }
 
 const STATE_TEXT: Record<PlayerState, string> = {
@@ -26,7 +36,7 @@ const STATE_TEXT: Record<PlayerState, string> = {
 
 /** Progress, transport buttons, speed, jump-to-sentence and status line of the reader. */
 export const PlayerControls: React.FC<PlayerControlsProps> = (props) => {
-  const { state, index, total, speed, latencyMs, buffered, prefetch, onToggle, onSeek, onSpeed } = props;
+  const { state, index, total, speed, latencyMs, buffered, prefetch, onToggle, onSeek, onSpeed, chapterTitle, sleepLabel, sleepActive, onSleep, ambientLabel, ambientActive, onAmbient } = props;
   const [jump, setJump] = useState('');
   const busy = state === 'loading';
   const playing = state === 'playing' || busy;
@@ -46,6 +56,7 @@ export const PlayerControls: React.FC<PlayerControlsProps> = (props) => {
       <div className="progress-wrapper">
         <div className="progress-info">
           <span>Câu {formatNumber(index + 1)} / {formatNumber(total)}</span>
+          {chapterTitle && <span className="chapter-now" title={chapterTitle}>{chapterTitle}</span>}
           <span>{percent.toFixed(1)}%</span>
         </div>
         <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(percent)} aria-label="Tiến độ đọc">
@@ -71,6 +82,12 @@ export const PlayerControls: React.FC<PlayerControlsProps> = (props) => {
             </button>
           ))}
         </div>
+        <button className={`btn-secondary small sleep-btn ${sleepActive ? 'active' : ''}`} onClick={onSleep} aria-label={`Hẹn giờ tắt: ${sleepLabel}`} title="Hẹn giờ tắt">
+          <Timer size={15} /> {sleepLabel}
+        </button>
+        <button className={`btn-secondary small sleep-btn ${ambientActive ? 'active' : ''}`} onClick={onAmbient} aria-label={`Âm thanh nền: ${ambientLabel}`} title="Âm thanh nền">
+          <Music2 size={15} /> {ambientLabel}
+        </button>
         <form className="jump-form" onSubmit={submitJump}>
           <label htmlFor="jump-input">Nhảy tới câu</label>
           <input id="jump-input" className="number-input" inputMode="numeric" value={jump} placeholder={String(index + 1)} onChange={(e) => setJump(e.target.value)} />
